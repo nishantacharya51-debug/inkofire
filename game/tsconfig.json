@@ -18,5 +18,5 @@
     "noEmit": true,
     "types": ["three", "node"]
   },
-  "include": ["src", "scripts/simulate.ts", "scripts/qa.ts", "scripts/probe.ts", "scripts/aimdiag.ts"]
+  "include": ["src", "scripts/simulate.ts", "scripts/qa.ts", "scripts/worldcheck.ts"]
 }
