@@ -1,0 +1,164 @@
+<!-- This is the secret ICT call website code. Paste this into a WordPress page editor (Text/HTML mode). -->
+
+<!DOCTYPE html>
+<html lang="en">
+<title> secretnishantfwh.wordpress.com </title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secret ICT Call Room</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f0f0f0; text-align: center; padding: 20px; }
+        #password-prompt { display: block; }
+        #call-room { display: none; }
+        video { width: 100%; max-width: 400px; border: 2px solid #333; margin: 10px; }
+        button { margin: 10px; padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .blur { filter: blur(10px); }
+        .face-filter { filter: hue-rotate(90deg) saturate(2); } /* Simple red tint filter */
+        #effects { margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <div id="password-prompt">
+        <h1>Secret ICT Call Access</h1>
+        <p>Enter the password to join:</p>
+        <input type="password" id="password" placeholder="Password">
+        <button onclick="checkPassword()">Enter</button>
+    </div>
+
+    <div id="call-room">
+        <h1>Secret Call Room</h1>
+        <p>Share this room ID with the other person: <span id="room-id"></span></p>
+        <input type="text" id="peer-room" placeholder="Enter peer's room ID">
+        <button onclick="connectToPeer()">Connect</button>
+        
+        <div>
+            <video id="local-video" autoplay muted></video>
+            <video id="remote-video" autoplay></video>
+        </div>
+        
+        <button onclick="startCall()">Start Video Call</button>
+        <button onclick="startVoiceCall()">Start Voice Call</button>
+        <button onclick="shareScreen()">Share Screen</button>
+        <button onclick="endCall()">End Call</button>
+        
+        <div id="effects">
+            <h3>Effects</h3>
+            <button onclick="toggleBackgroundBlur()">Toggle Background Blur</button>
+            <button onclick="toggleFaceFilter()">Toggle Face Filter</button>
+        </div>
+    </div>
+
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script> <!-- WebRTC adapter -->
+    <script>
+        const PASSWORD = "Nishant@123"; // Change this to your desired password
+        let localStream, remoteStream, peerConnection;
+        let roomId = Math.random().toString(36).substr(2, 9); // Simple random room ID
+
+        function checkPassword() {
+            const input = document.getElementById('password').value;
+            if (input === PASSWORD) {
+                document.getElementById('password-prompt').style.display = 'none';
+                document.getElementById('call-room').style.display = 'block';
+                document.getElementById('room-id').textContent = roomId;
+                initWebRTC();
+            } else {
+                alert('Incorrect password!');
+            }
+        }
+
+        async function initWebRTC() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('local-video').srcObject = localStream;
+            } catch (err) {
+                console.error('Error accessing media devices:', err);
+            }
+        }
+
+        function connectToPeer() {
+            const peerRoom = document.getElementById('peer-room').value;
+            if (peerRoom !== roomId) {
+                alert('Room IDs must match for connection!');
+                return;
+            }
+            // In a real app, use signaling server. Here, assume manual exchange.
+            createPeerConnection();
+        }
+
+        function createPeerConnection() {
+            peerConnection = new RTCPeerConnection();
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            peerConnection.ontrack = event => {
+                remoteStream = event.streams[0];
+                document.getElementById('remote-video').srcObject = remoteStream;
+            };
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    // In real app, send to signaling server. Here, log for manual exchange.
+                    console.log('ICE candidate:', JSON.stringify(event.candidate));
+                }
+            };
+        }
+
+        async function startCall() {
+            if (!peerConnection) createPeerConnection();
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            // Manually share offer with peer (in real app, via server).
+            console.log('Offer:', JSON.stringify(offer));
+        }
+
+        async function startVoiceCall() {
+            // Similar to video, but disable video.
+            localStream.getVideoTracks().forEach(track => track.enabled = false);
+            startCall();
+        }
+
+        async function shareScreen() {
+            try {
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                document.getElementById('local-video').srcObject = screenStream;
+                // Replace video track in peer connection.
+                if (peerConnection) {
+                    const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+                    sender.replaceTrack(screenStream.getVideoTracks()[0]);
+                }
+            } catch (err) {
+                console.error('Error sharing screen:', err);
+            }
+        }
+
+        function endCall() {
+            if (peerConnection) peerConnection.close();
+            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            document.getElementById('local-video').srcObject = null;
+            document.getElementById('remote-video').srcObject = null;
+        }
+
+        function toggleBackgroundBlur() {
+            const video = document.getElementById('local-video');
+            video.classList.toggle('blur');
+        }
+
+        function toggleFaceFilter() {
+            const video = document.getElementById('local-video');
+            video.classList.toggle('face-filter');
+        }
+
+        // For signaling (basic): In a real setup, use WebSockets. Here, peers must manually exchange SDP/ICE.
+        // Example: Copy console logs and paste into peer's console to set remote description.
+        window.setRemoteDescription = async (sdp) => {
+            if (peerConnection) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
+            }
+        };
+        window.addIceCandidate = async (candidate) => {
+            if (peerConnection) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(candidate)));
+            }
+        };
+    </script>
+</body>
+</html>
