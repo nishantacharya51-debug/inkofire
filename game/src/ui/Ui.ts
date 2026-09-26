@@ -168,6 +168,14 @@ export class Ui {
     }
   }
 
+  /**
+   * The UI root element. Full-screen menus cover the canvas, so pointer input
+   * meant for the 3D lobby has to be captured here and not on the canvas.
+   */
+  get element(): HTMLElement {
+    return this.root;
+  }
+
   /** Name of the full-screen menu currently displayed ('' when in-game). */
   get screen(): string {
     return this.currentScreen;

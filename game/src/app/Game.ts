@@ -249,14 +249,20 @@ export class Game implements UiHost {
       s === 'armory' || s === 'progression' || s === 'help' || s === 'results' || s === 'setup';
   }
 
-  /** Mouse drag over the canvas spins the lobby operator; wheel dollies. */
+  /**
+   * Lobby interaction: dragging anywhere that is not a control spins the
+   * operator, and the wheel dollies the camera. Menus cover the canvas, so
+   * these listen on the UI root (events still bubble from the screen surface).
+   */
   private bindLobbyInput(): void {
-    const el = this.engine.renderer?.domElement as HTMLElement | undefined;
-    if (!el) return;
+    const el = this.ui.element;
     let dragging = false;
     let lastX = 0;
+    const isControl = (target: EventTarget | null): boolean =>
+      target instanceof HTMLElement && target.closest('[data-action]') !== null;
+
     el.addEventListener('pointerdown', (e) => {
-      if (!this.lobbyActive) return;
+      if (!this.lobbyActive || isControl(e.target)) return;
       dragging = true;
       lastX = e.clientX;
       this.lobby?.pointerDown();
@@ -272,11 +278,13 @@ export class Game implements UiHost {
     };
     el.addEventListener('pointerup', stop);
     el.addEventListener('pointerleave', stop);
+    el.addEventListener('pointercancel', stop);
     el.addEventListener('wheel', (e) => {
       if (!this.lobbyActive) return;
       this.lobby?.wheel(e.deltaY);
     }, { passive: true });
   }
+
 
   private showMainMenu(): void {
     gameState.force('MAIN_MENU');
