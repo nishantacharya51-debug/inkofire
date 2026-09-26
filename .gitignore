@@ -1,0 +1,17 @@
+# Dependencies and build output (the site is built in CI)
+node_modules/
+game/node_modules/
+game/dist/
+dist/
+
+# Headless test artefacts (esbuild output, logs)
+.qa/
+game/.qa/
+*.log
+npm-debug.log*
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
