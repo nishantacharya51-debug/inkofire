@@ -12,7 +12,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -51,6 +51,25 @@ jobs:
             git show FETCH_HEAD:nishant.html > game/dist/ict/nishant.html 2>/dev/null || true
           fi
           ls -la game/dist/ict
+
+      # GitHub Pages on this repository is configured to publish the branch
+      # itself ("legacy" source), so also keep a ready-to-serve copy in /play.
+      # This makes the game reachable at <site>/play/ even before the Pages
+      # source is switched to "GitHub Actions".
+      - name: Sync the built game to /play
+        if: github.event_name == 'push'
+        run: |
+          rm -rf play
+          cp -r game/dist play
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A play .nojekyll
+          if git diff --cached --quiet; then
+            echo "no changes to publish"
+          else
+            git commit -m "Publish game build to /play"
+            git push
+          fi
 
       - uses: actions/configure-pages@v5
         with:
