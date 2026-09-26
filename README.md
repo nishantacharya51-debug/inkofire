@@ -23,6 +23,10 @@ ships with the game at `/secretnishantfwh/play/ict/`)*
 
 ## What the game does
 
+> Need to see the operator without a browser?
+> `bash scripts/run.sh scripts/preview.ts` rasterises it on the CPU and writes
+> `game/docs/operator-preview.png` (front, lobby, run, crouch, match-LOD, prone).
+
 - **Lobby** — a lit hangar with your operator standing on a rotating dais.
   Drag on the deck to spin the model, scroll to zoom, then board the dropship.
 - **Operator model** — generated in code from smooth anatomy (capsules, tapered

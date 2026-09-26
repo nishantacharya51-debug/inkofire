@@ -182,6 +182,9 @@ function mergeAll(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
   return merged;
 }
 
+/** Segment density. Menus render exactly one character, so they can afford it. */
+export type RigDetail = 'low' | 'high';
+
 export interface RigBones {
   root: THREE.Group;
   hips: THREE.Group;
@@ -218,6 +221,9 @@ interface BodyParts {
   shinL: THREE.Mesh;
   shinR: THREE.Mesh;
   head: THREE.Mesh;
+  visor: THREE.Mesh;
+  handL: THREE.Mesh;
+  handR: THREE.Mesh;
   headGear: THREE.Mesh;
   face: THREE.Mesh;
   accent: THREE.Mesh;
@@ -233,21 +239,29 @@ function variantKey(useHelmet: boolean, useVest: boolean): string {
  * Builds (once per variant) the full set of body meshes. Meshes reference
  * shared geometry, so clones are cheap — only the materials differ per rig.
  */
-function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean): BodyParts {
-  const key = `${variantKey(useHelmet, useVest)}_${palette.shirt}_${palette.vest}_${palette.pants}_${palette.boots}_${palette.helmet}_${palette.skin}_${palette.hair}_${palette.accent}`;
+function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean, detail: RigDetail = 'low'): BodyParts {
+  const key = `${variantKey(useHelmet, useVest)}_${detail}_${palette.shirt}_${palette.vest}_${palette.pants}_${palette.boots}_${palette.helmet}_${palette.skin}_${palette.hair}_${palette.accent}`;
   const cached = bodyCache.get(key);
   if (cached) return cached;
 
   const p = palette;
+  // Radial segment counts: doubled-up in the lobby, trimmed in a 60-player match.
+  const SEG = detail === 'high' ? { limb: 14, cap: 6, torso: 18, ball: 16, body: 14, band: 20 } : { limb: 9, cap: 3, torso: 11, ball: 11, body: 12, band: 12 };
+  const cap = (r: number, len: number, x: number, y: number, z: number, axis: 'y' | 'x' | 'z' = 'y'): THREE.BufferGeometry =>
+    capsule(r, len, x, y, z, axis, SEG.limb, SEG.cap);
+  const tap = (rTop: number, rBot: number, h: number, x: number, y: number, z: number, squashZ = 1): THREE.BufferGeometry =>
+    taper(rTop, rBot, h, x, y, z, SEG.torso, squashZ);
+  const ball = (r: number, x: number, y: number, z: number, scale?: [number, number, number]): THREE.BufferGeometry =>
+    sphereG(r, x, y, z, SEG.ball, Math.max(6, Math.round(SEG.ball * 0.72)), scale);
 
   /* ---- pelvis + belt ---- */
   const pelvis = meshOf(`pelvis|${key}`, () => mergeAll([
-    taper(0.155, 0.135, 0.24, 0, 0.0, 0, 16, 0.72),
+    tap(0.155, 0.135, 0.24, 0, 0.0, 0, 0.72),
     roundBox(0.30, 0.10, 0.23, 0.05, 0, -0.10, 0.005) // hip pads
   ]), cloth(p.pants), 'pelvis');
 
   const belt = meshOf(`belt|${key}`, () => mergeAll([
-    band(0.176, 0.16, 0.055, 0, 0.055, 0, 0.74),
+    band(0.176, 0.16, 0.055, 0, 0.055, 0, 0.74, SEG.band),
     roundBox(0.075, 0.075, 0.045, 0.018, 0.10, 0.03, -0.135),  // pouch
     roundBox(0.075, 0.075, 0.045, 0.018, -0.10, 0.03, -0.135), // pouch
     roundBox(0.05, 0.05, 0.03, 0.012, 0, 0.035, 0.145)         // buckle
@@ -255,19 +269,19 @@ function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean
 
   /* ---- torso ---- */
   const torso = meshOf(`torso|${key}`, () => mergeAll([
-    taper(0.185, 0.152, 0.40, 0, 0.20, 0, 18, 0.66),   // ribcage → waist
-    taper(0.16, 0.185, 0.09, 0, 0.02, 0, 14, 0.7),     // waist join
-    sphereG(0.115, 0, 0.40, 0, 12, 8, [1.42, 0.7, 0.72]), // upper chest mass
-    roundBox(0.30, 0.05, 0.20, 0.02, 0, 0.445, 0)       // collar bone shelf
+    tap(0.185, 0.152, 0.40, 0, 0.20, 0, 0.66),   // ribcage → waist
+    tap(0.16, 0.185, 0.09, 0, 0.02, 0, 0.7),     // waist join
+    ball(0.112, 0, 0.40, 0, [1.34, 0.66, 0.70]), // upper chest mass
+    roundBox(0.225, 0.035, 0.155, 0.015, 0, 0.45, 0)       // collar bone shelf
   ]), cloth(p.shirt), 'torso');
 
   const vestParts: THREE.BufferGeometry[] = [
-    taper(0.196, 0.176, 0.30, 0, 0.245, 0, 16, 0.72),   // carrier body
-    roundBox(0.26, 0.20, 0.055, 0.02, 0, 0.27, -0.125), // front plate
-    roundBox(0.24, 0.20, 0.05, 0.02, 0, 0.27, 0.115),   // back plate
-    roundBox(0.10, 0.07, 0.035, 0.014, 0.10, 0.36, -0.145), // mag pouch
-    roundBox(0.10, 0.07, 0.035, 0.014, -0.02, 0.36, -0.145),
-    roundBox(0.07, 0.10, 0.04, 0.014, -0.125, 0.33, -0.14), // radio
+    tap(0.188, 0.172, 0.29, 0, 0.245, 0, 0.70),   // carrier body
+    roundBox(0.215, 0.155, 0.04, 0.016, 0, 0.275, -0.118), // front plate
+    roundBox(0.20, 0.15, 0.038, 0.015, 0, 0.275, 0.11),   // back plate
+    roundBox(0.075, 0.055, 0.028, 0.011, 0.075, 0.345, -0.138), // mag pouch
+    roundBox(0.075, 0.055, 0.028, 0.011, -0.02, 0.345, -0.138),
+    roundBox(0.055, 0.085, 0.032, 0.011, -0.115, 0.325, -0.132), // radio
     roundBox(0.16, 0.022, 0.02, 0.008, 0, 0.185, -0.155),   // molle row
     roundBox(0.16, 0.022, 0.02, 0.008, 0, 0.225, -0.155),
     roundBox(0.05, 0.16, 0.03, 0.012, 0.145, 0.33, -0.10),
@@ -276,44 +290,43 @@ function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean
   const vest = meshOf(`vest|${key}`, () => mergeAll(vestParts), gear(p.vest), 'vest');
 
   const pack = meshOf(`pack|${key}`, () => mergeAll([
-    roundBox(0.28, 0.34, 0.15, 0.045, 0, 0.26, 0.20),
-    roundBox(0.22, 0.09, 0.06, 0.02, 0, 0.14, 0.30),
-    roundBox(0.045, 0.30, 0.035, 0.012, 0.10, 0.28, 0.09),
-    roundBox(0.045, 0.30, 0.035, 0.012, -0.10, 0.28, 0.09)
+    roundBox(0.235, 0.26, 0.095, 0.035, 0, 0.30, 0.155),   // main body
+    roundBox(0.20, 0.075, 0.055, 0.018, 0, 0.40, 0.145),   // top lid
+    roundBox(0.035, 0.20, 0.03, 0.01, 0.075, 0.32, 0.105), // compression strap
+    roundBox(0.035, 0.20, 0.03, 0.01, -0.075, 0.32, 0.105)
   ]), leather(p.boots), 'pack');
 
   /* ---- arms ---- */
   const shoulder = (mirror: number): THREE.Mesh => meshOf(`shoulder|${key}`, () => mergeAll([
-    sphereG(0.083, 0, 0, 0, 12, 9, [1.05, 0.95, 1.0]),
+    ball(0.069, 0, 0, 0, [1.02, 0.95, 1.0]),
     // Deltoid pad strapped over the joint.
-    sphereG(0.092, mirror * 0.012, 0.012, 0, 12, 9, [1.02, 0.68, 1.06])
+    ball(0.071, mirror * 0.009, 0.011, 0, [1.0, 0.55, 1.0])
   ]), gear(p.vest), 'shoulder');
 
   const upper = (): THREE.Mesh => meshOf(`upper|${key}`, () => mergeAll([
-    capsule(0.062, 0.20, 0, -0.15, 0),
-    sphereG(0.058, 0, -0.285, 0, 10, 8) // elbow
+    cap(0.062, 0.20, 0, -0.15, 0),
+    ball(0.058, 0, -0.285, 0) // elbow
   ]), cloth(p.shirt), 'upper');
 
-  const fore = (mirror: number): THREE.Mesh => meshOf(`fore|${key}`, () => mergeAll([
-    capsule(0.055, 0.175, 0, -0.115, 0),
-    // glove: palm, fingers, thumb
-    roundBox(0.085, 0.095, 0.045, 0.026, 0, -0.255, 0.004),
-    capsule(0.0145, 0.045, -0.026, -0.325, 0.0, 'y', 6, 2),
-    capsule(0.0145, 0.048, 0.0, -0.328, 0.0, 'y', 6, 2),
-    capsule(0.013, 0.036, mirror * 0.048, -0.272, 0.012, 'y', 6, 2)
-  ]), mirror > 0 ? cloth(p.shirt) : skinMat(p.skin), 'fore');
+  // Sleeved forearm — identical on both arms so the operator reads as a unit.
+  const fore = (): THREE.Mesh => meshOf(`fore|${key}`, () => mergeAll([
+    cap(0.055, 0.175, 0, -0.115, 0),
+    ball(0.05, 0, -0.006, 0) // elbow cuff
+  ]), cloth(p.shirt), 'fore');
 
-  const gloveL = meshOf(`gloveL|${key}`, () => mergeAll([
-    roundBox(0.085, 0.095, 0.045, 0.026, 0, -0.255, 0.004),
-    capsule(0.0145, 0.045, -0.026, -0.325, 0.0, 'y', 6, 2),
-    capsule(0.0145, 0.048, 0.0, -0.328, 0.0, 'y', 6, 2),
-    capsule(0.013, 0.036, 0.048, -0.272, 0.012, 'y', 6, 2)
-  ]), leather(p.boots), 'gloveL');
+  // Gloved hand: palm, three fingers, thumb and a wrist strap.
+  const glove = (): THREE.Mesh => meshOf(`glove|${key}`, () => mergeAll([
+    roundBox(0.082, 0.092, 0.045, 0.025, 0, -0.255, 0.004),
+    capsule(0.0145, 0.045, -0.022, -0.325, 0.0, 'y', detail === 'high' ? 6 : 4, 2),
+    capsule(0.0145, 0.048, 0.012, -0.328, 0.0, 'y', detail === 'high' ? 6 : 4, 2),
+    capsule(0.013, 0.036, 0.045, -0.272, 0.012, 'y', detail === 'high' ? 6 : 4, 2),
+    roundBox(0.035, 0.03, 0.03, 0.012, 0, -0.20, -0.035)
+  ]), leather(p.boots), 'glove');
 
   /* ---- legs ---- */
   const thigh = (): THREE.Mesh => meshOf(`thigh|${key}`, () => mergeAll([
-    capsule(0.09, 0.30, 0, -0.20, 0),
-    sphereG(0.075, 0, -0.40, 0, 10, 8) // knee
+    cap(0.09, 0.30, 0, -0.20, 0),
+    ball(0.075, 0, -0.40, 0) // knee
   ]), cloth(p.pants), 'thigh');
 
   const kneePad = meshOf(`knee|${key}`, () => mergeAll([
@@ -321,83 +334,84 @@ function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean
   ]), gear(p.vest), 'knee');
 
   const shin = (): THREE.Mesh => meshOf(`shin|${key}`, () => mergeAll([
-    capsule(0.072, 0.26, 0, -0.17, 0),
+    cap(0.072, 0.26, 0, -0.17, 0),
     // boot: ankle collar, foot, sole, toe cap
-    taper(0.078, 0.072, 0.10, 0, -0.35, 0, 12, 0.9),
-    roundBox(0.10, 0.075, 0.255, 0.03, 0, -0.415, -0.045),
-    roundBox(0.108, 0.026, 0.27, 0.012, 0, -0.462, -0.045),
-    roundBox(0.095, 0.05, 0.045, 0.02, 0, -0.425, -0.165)
+    tap(0.078, 0.072, 0.10, 0, -0.35, 0, 0.9),
+    roundBox(0.093, 0.072, 0.225, 0.028, 0, -0.412, -0.038),
+    roundBox(0.099, 0.024, 0.235, 0.011, 0, -0.455, -0.038),
+    roundBox(0.087, 0.046, 0.04, 0.018, 0, -0.42, -0.145)
   ]), leather(p.boots), 'shin');
 
   /* ---- head ---- */
   const headParts: THREE.BufferGeometry[] = [
-    sphereG(0.108, 0, 0.02, 0, 14, 10, [0.95, 1.06, 1.02]), // cranium
-    taper(0.082, 0.055, 0.13, 0, -0.055, -0.012, 12, 0.88),  // jaw
-    sphereG(0.05, 0, -0.02, 0.078, 10, 8),                    // occiput
-    sphereG(0.028, 0.098, 0.0, 0.008, 8, 6, [0.5, 1.1, 0.8]), // ears
-    sphereG(0.028, -0.098, 0.0, 0.008, 8, 6, [0.5, 1.1, 0.8]),
-    roundBox(0.032, 0.042, 0.028, 0.012, 0, -0.012, -0.108),  // nose
-    roundBox(0.06, 0.022, 0.02, 0.008, 0, -0.078, -0.092)     // chin
+    ball(0.108, 0, 0.02, 0, [0.95, 1.06, 1.02]), // cranium
+    tap(0.082, 0.055, 0.13, 0, -0.055, -0.012, 0.88),  // jaw
+    ball(0.05, 0, -0.02, 0.078),                    // occiput
+    ball(0.028, 0.098, 0.0, 0.008, [0.5, 1.1, 0.8]), // ears
+    ball(0.028, -0.098, 0.0, 0.008, [0.5, 1.1, 0.8]),
+    roundBox(0.03, 0.04, 0.03, 0.011, 0, -0.012, -0.113),  // nose
+    roundBox(0.058, 0.02, 0.02, 0.008, 0, -0.08, -0.097)   // chin
   ];
   const head = meshOf(`head|${key}`, () => mergeAll(headParts), skinMat(p.skin), 'head');
 
   const faceParts: THREE.BufferGeometry[] = [
-    sphereG(0.019, 0.042, 0.028, -0.094, 8, 7, [1, 1, 0.75]),  // eyes
-    sphereG(0.019, -0.042, 0.028, -0.094, 8, 7, [1, 1, 0.75]),
-    sphereG(0.0075, 0.042, 0.028, -0.106, 8, 6),               // pupils
-    sphereG(0.0075, -0.042, 0.028, -0.106, 8, 6),
-    roundBox(0.052, 0.012, 0.018, 0.004, 0.042, 0.058, -0.098), // brows
-    roundBox(0.052, 0.012, 0.018, 0.004, -0.042, 0.058, -0.098),
-    roundBox(0.036, 0.012, 0.014, 0.004, 0, -0.07, -0.086)      // mouth
+    sphereG(0.0185, 0.042, 0.028, -0.098, 8, 7, [1, 1, 0.72]), // eyes
+    sphereG(0.0185, -0.042, 0.028, -0.098, 8, 7, [1, 1, 0.72]),
+    sphereG(0.0072, 0.042, 0.028, -0.112, 8, 6),               // pupils
+    sphereG(0.0072, -0.042, 0.028, -0.112, 8, 6),
+    roundBox(0.05, 0.011, 0.018, 0.004, 0.042, 0.056, -0.104), // brows
+    roundBox(0.05, 0.011, 0.018, 0.004, -0.042, 0.056, -0.104),
+    roundBox(0.034, 0.011, 0.014, 0.004, 0, -0.072, -0.094)    // mouth
   ];
   const face = meshOf(`face|${key}`, () => mergeAll(faceParts), mat(0x241d19, 0.42, 0.02, 'face'), 'face');
 
   const gearParts: THREE.BufferGeometry[] = useHelmet
     ? [
-        dome(0.125, 0, 0.045, 0, Math.PI * 2, [0.96, 1.02, 1.04]),   // shell
-        roundBox(0.20, 0.045, 0.05, 0.018, 0, 0.038, -0.115),        // brim
-        roundBox(0.042, 0.05, 0.06, 0.014, 0, 0.095, -0.09),         // nvg mount
-        roundBox(0.028, 0.028, 0.03, 0.01, 0.11, 0.045, 0),          // side rail
-        roundBox(0.028, 0.028, 0.03, 0.01, -0.11, 0.045, 0),         // side rail
-        roundBox(0.26, 0.05, 0.30, 0.02, 0, -0.005, 0.02),           // helmet band
+        dome(0.118, 0, 0.035, 0, Math.PI * 2, [0.97, 1.0, 1.06]),    // shell
+        band(0.122, 0.108, 0.028, 0, 0.012, 0, 1.04, SEG.band),      // retention strap
+        roundBox(0.155, 0.032, 0.045, 0.014, 0, 0.042, -0.108),      // brim
+        roundBox(0.034, 0.042, 0.05, 0.012, 0, 0.088, -0.082),       // nvg mount
+        roundBox(0.024, 0.024, 0.055, 0.009, 0.098, 0.028, 0.012),   // side rail
+        roundBox(0.024, 0.024, 0.055, 0.009, -0.098, 0.028, 0.012),  // side rail
         // headset: ear cups + boom mic
-        taper(0.042, 0.042, 0.045, 0.105, -0.005, 0.0, 10, 1),
-        taper(0.042, 0.042, 0.045, -0.105, -0.005, 0.0, 10, 1),
-        roundBox(0.012, 0.012, 0.11, 0.005, -0.10, -0.045, -0.05)
+        tap(0.038, 0.038, 0.042, 0.102, -0.008, 0.0, 1),
+        tap(0.038, 0.038, 0.042, -0.102, -0.008, 0.0, 1),
+        roundBox(0.01, 0.01, 0.095, 0.004, -0.095, -0.042, -0.042)
       ]
     : [
-        dome(0.113, 0, 0.035, 0.004, Math.PI * 2, [1.0, 0.86, 1.03], 14, 8), // hair
-        roundBox(0.20, 0.05, 0.16, 0.02, 0, 0.055, 0.03)              // hair volume
+        dome(0.113, 0, 0.032, 0.004, Math.PI * 2, [1.0, 0.84, 1.03], 14, 8), // hair
+        roundBox(0.165, 0.035, 0.135, 0.016, 0, 0.05, 0.028)         // hair volume
       ];
   const headGear = meshOf(`headgear|${key}`, () => mergeAll(gearParts), useHelmet ? gear(p.helmet) : mat(p.hair, 0.92, 0.02, 'hair'), 'headGear');
 
+  // Goggles sit across the eyes; only worn with the helmet.
   const visor = meshOf(`visor|${key}`, () => mergeAll([
-    roundBox(0.165, 0.048, 0.05, 0.018, 0, 0.022, -0.108),
-    roundBox(0.185, 0.02, 0.03, 0.008, 0, 0.05, -0.10)
+    roundBox(0.135, 0.04, 0.042, 0.014, 0, 0.016, -0.098),
+    roundBox(0.15, 0.018, 0.026, 0.007, 0, 0.038, -0.092),
+    roundBox(0.05, 0.022, 0.02, 0.008, 0.078, 0.006, -0.03)
   ]), mat(0x16212b, 0.18, 0.45, 'visor'), 'visor');
 
   const accent = meshOf(`accent|${key}`, () => mergeAll([
-    roundBox(0.29, 0.032, 0.215, 0.012, 0, 0.36, 0),          // chest chevron
-    roundBox(0.085, 0.032, 0.02, 0.008, 0.126, 0.42, -0.10),  // shoulder tab
-    roundBox(0.085, 0.032, 0.02, 0.008, -0.126, 0.42, -0.10)
+    roundBox(0.1, 0.026, 0.022, 0.009, 0.052, 0.372, -0.152),          // chest chevron
+    roundBox(0.068, 0.025, 0.018, 0.007, 0.115, 0.402, -0.082),  // shoulder tab
+    roundBox(0.068, 0.025, 0.018, 0.007, -0.115, 0.402, -0.082)
   ]), mat(p.accent, 0.5, 0.25, 'accent'), 'accent');
 
   const neck = meshOf(`neck|${key}`, () => mergeAll([
-    taper(0.052, 0.062, 0.11, 0, 0.42, 0.006, 12, 0.9)
+    tap(0.05, 0.06, 0.135, 0, 0.425, 0.006, 0.9)
   ]), skinMat(p.skin), 'neck');
 
   const parts: BodyParts = {
     pelvis, torso, vest, belt, pack, neck,
     shoulderL: shoulder(1), shoulderR: shoulder(-1),
     upperL: upper(), upperR: upper(),
-    foreL: fore(1), foreR: fore(-1),
+    foreL: fore(), foreR: fore(),
     thighL: thigh(), thighR: thigh(),
     shinL: shin(), shinR: shin(),
-    head, headGear, face, accent
+    head, headGear, face, accent, visor,
+    handL: glove(), handR: glove()
   };
-  void gloveL;
   void kneePad;
-  void visor;
   bodyCache.set(key, parts);
   return parts;
 }
@@ -405,6 +419,9 @@ function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean
 /* ------------------------------------------------------------------ */
 /* Rig                                                                 */
 /* ------------------------------------------------------------------ */
+
+/** Hip height of the standing pose — the model's anchor against the hitboxes. */
+const HIP_Y = 0.98;
 
 export class CharacterRig {
   readonly root = new THREE.Group();
@@ -429,19 +446,19 @@ export class CharacterRig {
   private showcase = false;
   private showcasePhase = 0;
 
-  constructor(paletteIndex = 0, cosmetic: { helmet?: boolean; vest?: boolean } = {}) {
+  constructor(paletteIndex = 0, cosmetic: { helmet?: boolean; vest?: boolean; detail?: RigDetail } = {}) {
     this.palette = SKINS[Math.abs(paletteIndex) % SKINS.length];
     const p = this.palette;
     const useHelmet = cosmetic.helmet ?? true;
     const useVest = cosmetic.vest ?? true;
-    const body = bodyFor(p, useHelmet, useVest);
+    const body = bodyFor(p, useHelmet, useVest, cosmetic.detail ?? 'low');
 
     /* ---------------- Hierarchy (real anatomical pivots) ---------------- */
     const root = this.root;
     root.name = 'character';
 
     const hips = new THREE.Group();
-    hips.position.y = 0.94;
+    hips.position.y = HIP_Y;
     root.add(hips);
 
     const spine = new THREE.Group();
@@ -452,7 +469,7 @@ export class CharacterRig {
     spine.add(chest);
 
     const head = new THREE.Group();
-    head.position.y = 0.44;
+    head.position.y = 0.46;
     chest.add(head);
 
     const armL = new THREE.Group();
@@ -477,14 +494,17 @@ export class CharacterRig {
     hips.add(legR);
 
     const shinL = new THREE.Group();
-    shinL.position.y = -0.415;
+    shinL.position.y = -0.465;
     legL.add(shinL);
     const shinR = new THREE.Group();
-    shinR.position.y = -0.415;
+    shinR.position.y = -0.465;
     legR.add(shinR);
 
+    // +90° about X maps the weapon's barrel (+Z) onto the forearm's -Y axis,
+    // so the gun points where the hand points instead of floating beside it.
     const weaponAnchor = new THREE.Group();
-    weaponAnchor.position.set(0, -0.30, -0.10);
+    weaponAnchor.position.set(0, -0.235, 0.012);
+    weaponAnchor.rotation.x = Math.PI / 2;
     foreR.add(weaponAnchor);
 
     this.bones = { root, hips, spine, chest, head, armL, armR, foreL, foreR, legL, legR, shinL, shinR, weaponAnchor, chute: null };
@@ -494,32 +514,33 @@ export class CharacterRig {
     chest.add(body.torso, body.vest, body.pack, body.accent, body.neck);
     armL.add(body.shoulderL, body.upperL);
     armR.add(body.shoulderR, body.upperR);
-    foreL.add(body.foreL);
-    foreR.add(body.foreR);
+    foreL.add(body.foreL, body.handL);
+    foreR.add(body.foreR, body.handR);
     legL.add(body.thighL);
     legR.add(body.thighR);
     shinL.add(body.shinL);
     shinR.add(body.shinR);
     head.add(body.head, body.face, body.headGear);
+    if (useHelmet) head.add(body.visor);
 
     /* ---------------- Far LOD body ---------------- */
     const simpleGeoms: THREE.BufferGeometry[] = [
-      taper(0.19, 0.15, 0.46, 0, 1.24, 0, 8, 0.7),
-      taper(0.155, 0.135, 0.24, 0, 0.94, 0, 8, 0.72),
-      capsule(0.07, 0.24, 0.215, 1.32, 0, 'y', 7, 3),
-      capsule(0.07, 0.24, -0.215, 1.32, 0, 'y', 7, 3),
-      capsule(0.09, 0.34, 0.10, 0.70, 0, 'y', 7, 3),
-      capsule(0.09, 0.34, -0.10, 0.70, 0, 'y', 7, 3),
-      capsule(0.075, 0.30, 0.10, 0.30, 0, 'y', 7, 3),
-      capsule(0.075, 0.30, -0.10, 0.30, 0, 'y', 7, 3),
-      roundBox(0.11, 0.08, 0.24, 0.03, 0.10, 0.055, -0.04),
-      roundBox(0.11, 0.08, 0.24, 0.03, -0.10, 0.055, -0.04)
+      taper(0.18, 0.145, 0.46, 0, 1.28, 0, 8, 0.7),
+      taper(0.15, 0.13, 0.24, 0, 0.98, 0, 8, 0.72),
+      capsule(0.07, 0.24, 0.205, 1.36, 0, 'y', 7, 3),
+      capsule(0.07, 0.24, -0.205, 1.36, 0, 'y', 7, 3),
+      capsule(0.09, 0.34, 0.10, 0.74, 0, 'y', 7, 3),
+      capsule(0.09, 0.34, -0.10, 0.74, 0, 'y', 7, 3),
+      capsule(0.075, 0.30, 0.10, 0.32, 0, 'y', 7, 3),
+      capsule(0.075, 0.30, -0.10, 0.32, 0, 'y', 7, 3),
+      roundBox(0.10, 0.078, 0.23, 0.028, 0.10, 0.05, -0.04),
+      roundBox(0.10, 0.078, 0.23, 0.028, -0.10, 0.05, -0.04)
     ];
     this.simpleBody = new THREE.Mesh(shared(`simpleBody|${variantKey(useHelmet, useVest)}`, () => mergeAll(simpleGeoms)), cloth(useVest ? p.vest : p.shirt));
     this.simpleBody.castShadow = true;
     this.simpleRoot.add(this.simpleBody);
     this.simpleHead = new THREE.Mesh(
-      shared(`simpleHead|${variantKey(useHelmet, useVest)}`, () => mergeAll([sphereG(0.11, 0, 1.68, 0, 10, 8, [0.95, 1.08, 1.02])])),
+      shared(`simpleHead|${variantKey(useHelmet, useVest)}`, () => mergeAll([sphereG(0.11, 0, 1.72, 0, 10, 8, [0.95, 1.08, 1.02])])),
       useHelmet ? gear(p.helmet) : skinMat(p.skin)
     );
     this.simpleHead.castShadow = true;
@@ -592,7 +613,7 @@ export class CharacterRig {
 
   private resetPose(): void {
     const b = this.bones;
-    b.hips.position.set(0, 0.94, 0);
+    b.hips.position.set(0, HIP_Y, 0);
     b.hips.rotation.set(0, 0, 0);
     b.spine.rotation.set(0, 0, 0);
     b.chest.rotation.set(0, 0, 0);
@@ -652,7 +673,7 @@ export class CharacterRig {
 
     const armed = this.weaponId !== '';
     const ads = clamp(actor.adsProgress, 0, 1);
-    const targetAim = armed ? (actor.isLocal ? Math.max(0.55, ads) : ads > 0.4 ? ads : 0.45 + 0.35 * moving) : 0;
+    const targetAim = armed ? (actor.isLocal ? Math.max(0.62, ads) : ads > 0.4 ? ads : 0.55 + 0.3 * moving) : 0;
     this.aimBlend = damp(this.aimBlend, targetAim, 9, dt);
 
     if (actor.reloadTimer > 0) this.reloadBlend = Math.min(1, this.reloadBlend + dt * 4);
@@ -690,7 +711,7 @@ export class CharacterRig {
         b.foreR.rotation.x = -0.42;
         b.head.rotation.y = sway * 1.4;
         if (state === 'CROUCH_IDLE') {
-          b.hips.position.y = 0.74;
+          b.hips.position.y = HIP_Y - 0.20;
           b.legL.rotation.x = -0.95;
           b.legR.rotation.x = -0.85;
           b.shinL.rotation.x = 1.55;
@@ -717,7 +738,7 @@ export class CharacterRig {
         // Knees only bend backwards and plant on contact.
         b.shinL.rotation.x = Math.max(0, -Math.cos(phase)) * swing * 1.6 + 0.1;
         b.shinR.rotation.x = Math.max(0, -Math.cos(phase + Math.PI)) * swing * 1.6 + 0.1;
-        b.hips.position.y = 0.94 + Math.abs(Math.sin(phase)) * 0.04 * moving - 0.045 * running;
+        b.hips.position.y = HIP_Y + Math.abs(Math.sin(phase)) * 0.04 * moving - 0.045 * running;
         b.hips.rotation.y = Math.sin(phase) * 0.1 * moving;
         b.hips.rotation.z = Math.sin(phase * 2) * 0.02 * moving;
         b.spine.rotation.x = lean;
@@ -735,7 +756,7 @@ export class CharacterRig {
       }
       case 'CROUCH_WALK': {
         const p2 = t * 5.0;
-        b.hips.position.y = 0.74 + Math.abs(Math.sin(p2)) * 0.02;
+        b.hips.position.y = HIP_Y - 0.20 + Math.abs(Math.sin(p2)) * 0.02;
         b.legL.rotation.x = -0.9 + Math.sin(p2) * 0.5;
         b.legR.rotation.x = -0.9 + Math.sin(p2 + Math.PI) * 0.5;
         b.shinL.rotation.x = 1.55 - Math.sin(p2) * 0.5;
@@ -774,7 +795,7 @@ export class CharacterRig {
       }
       case 'LAND': {
         const k = Math.min(1, actor.landingImpact / 16);
-        b.hips.position.y = 0.94 - 0.32 * k;
+        b.hips.position.y = HIP_Y - 0.32 * k;
         b.legL.rotation.x = -0.9 * k;
         b.legR.rotation.x = -0.9 * k;
         b.legL.rotation.z = 0.12 * k;
@@ -853,7 +874,7 @@ export class CharacterRig {
       case 'DEAD': {
         this.deathProgress = Math.min(1, this.deathProgress + dt * 2.2);
         const k = this.deathProgress;
-        b.hips.position.y = lerp(0.94, 0.24, k);
+        b.hips.position.y = lerp(HIP_Y, 0.24, k);
         b.hips.rotation.x = lerp(0, -1.5, k);
         b.legL.rotation.x = lerp(0, 0.3, k);
         b.legR.rotation.x = lerp(0, 0.55, k);
@@ -945,7 +966,7 @@ export class CharacterRig {
     const sway = Math.sin(t * 0.37) * 0.035;
     this.resetPose();
 
-    b.hips.position.y = 0.94 + breath * 0.5;
+    b.hips.position.y = HIP_Y + breath * 0.5;
     b.hips.rotation.y = sway;
     b.hips.rotation.z = 0.03;
     b.spine.rotation.x = 0.03 + breath * 0.4;
@@ -964,18 +985,19 @@ export class CharacterRig {
     b.shinL.rotation.x = 0.26;
 
     if (this.weaponId) {
-      // Hero carry: weapon diagonal across the chest, both hands on it.
-      b.armR.rotation.x = -0.62 + breath * 0.6;
-      b.armR.rotation.z = -0.30;
-      b.armR.rotation.y = 0.22;
-      b.foreR.rotation.x = -1.15;
-      b.armL.rotation.x = -0.72 + breath * 0.5;
-      b.armL.rotation.y = 0.9;
-      b.armL.rotation.z = 0.5;
-      b.foreL.rotation.x = -1.0;
-      b.foreL.rotation.y = -0.32;
-      this.bones.weaponAnchor.rotation.set(0.16, 0.45, 0.06);
-      this.bones.weaponAnchor.position.set(0, -0.30, -0.10);
+      // Low-ready hero carry: both hands on the weapon, muzzle down and across.
+      this.holdWeapon(1, 0);
+      b.armR.rotation.x += 0.16 + breath * 0.6;
+      b.armR.rotation.y -= 0.1;
+      b.foreR.rotation.x += 0.18;
+      b.armL.rotation.x += 0.18 + breath * 0.5;
+      b.foreL.rotation.x += 0.22;
+      b.spine.rotation.y = -0.16;
+      b.spine.rotation.x += 0.02;
+      b.chest.rotation.y = -0.14;
+      // Cant the weapon inboard so the muzzle points to the deck, not the sky.
+      this.bones.weaponAnchor.rotation.set(Math.PI / 2 - 0.45, 0.42, 0);
+      this.bones.weaponAnchor.position.set(0.01, -0.235, 0.012);
     } else {
       b.armL.rotation.x = 0.06 + breath;
       b.armR.rotation.x = 0.06 + breath;
@@ -1005,8 +1027,8 @@ export class CharacterRig {
   reset(): void {
     this.deathProgress = 0;
     this.animTime = 0;
-    this.bones.weaponAnchor.rotation.set(0, 0, 0);
-    this.bones.weaponAnchor.position.set(0, -0.30, -0.10);
+    this.bones.weaponAnchor.rotation.set(Math.PI / 2, 0, 0);
+    this.bones.weaponAnchor.position.set(0, -0.235, 0.012);
   }
 
   /** Geometry is shared between rigs, so there is nothing per-rig to free. */
@@ -1035,6 +1057,23 @@ function wcyl(rTop: number, rBot: number, h: number, x: number, y: number, z: nu
 }
 
 /** Original weapon shapes, matched to the weapon class. */
+/**
+ * Where the hand closes on each weapon class, in the model's own space.
+ * The merged mesh is translated by the negative of this so the *grip* becomes
+ * the origin — then the hand's weapon anchor only has to orient the model, and
+ * the gun automatically sits in the fist instead of floating beside it.
+ */
+const GRIP_POINT: Record<string, [number, number, number]> = {
+  AR: [0, -0.055, -0.16],
+  SMG: [0, -0.05, -0.13],
+  SHOTGUN: [0, -0.06, -0.24],
+  DMR: [0, -0.055, -0.2],
+  SNIPER: [0, -0.10, -0.05],
+  LMG: [0, -0.06, -0.2],
+  PISTOL: [0, -0.095, -0.03],
+  MELEE: [0, 0, -0.05]
+};
+
 export function buildWeaponGeometry(weaponId: string): THREE.BufferGeometry | null {
   const cls = weaponClassOf(weaponId);
   const geoms: THREE.BufferGeometry[] = [];
@@ -1112,7 +1151,10 @@ export function buildWeaponGeometry(weaponId: string): THREE.BufferGeometry | nu
     default:
       return null;
   }
-  return mergeAll(geoms);
+  const merged = mergeAll(geoms);
+  const grip = GRIP_POINT[cls] ?? [0, 0, 0];
+  merged.translate(-grip[0], -grip[1], -grip[2]);
+  return merged;
 }
 
 export function weaponClassOf(weaponId: string): string {

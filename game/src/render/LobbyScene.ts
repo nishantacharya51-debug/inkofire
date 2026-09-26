@@ -101,7 +101,8 @@ export class LobbyScene {
     scene.add(this.dais);
 
     /* ---------------- Operator ---------------- */
-    this.rig = new CharacterRig(paletteIndex, { helmet: true, vest: true });
+    // Only one character is on screen here, so the lobby uses the dense build.
+    this.rig = new CharacterRig(paletteIndex, { helmet: true, vest: true, detail: 'high' });
     this.rig.setShowcase(true);
     this.rig.setWeapon(weaponId);
     this.rig.root.position.y = 0.22;
@@ -228,17 +229,16 @@ export class LobbyScene {
     this.camera.lookAt(this.lookAt);
   }
 
+  /**
+   * Frees the rig's own attachments. Body geometry is *owned by the shared
+   * cache in CharacterRig*, so it is deliberately left alone — disposing it
+   * here would break every other character built from the same variant.
+   */
   dispose(): void {
     this.rig.dispose();
-    this.scene.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (mesh.isMesh && !geomCacheKeys.has(mesh.geometry)) mesh.geometry.dispose();
-    });
+    for (const light of this.accentLights) light.dispose?.();
   }
 }
-
-/** Geometries owned by the shared CharacterRig cache must never be freed here. */
-const geomCacheKeys = new Set<THREE.BufferGeometry>();
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
