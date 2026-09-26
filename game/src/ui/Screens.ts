@@ -9,6 +9,25 @@ import { ACHIEVEMENTS, type Profile, type PlayerStats, type MatchRecord } from '
  * one is wired to (`data-action`), so no screen can ship with a dead control.
  */
 
+const BRIEFING = [
+  '<b>Land smart.</b> Hot POIs hold the best loot and the most enemies — pick a quiet compound and rotate in.',
+  '<b>Grab a gun first.</b> Anything beats bare hands; a pistol now is worth more than a rifle three blocks away.',
+  '<b>Mind the ring.</b> The zone out-damages everything early. Stay inside it and use it to force fights on your terms.',
+  '<b>Squads revive.</b> A knocked teammate can be picked up — push only when you can still get them back.',
+  '<b>Drive, don\'t walk.</b> Vehicles cross the island in seconds and make hard cover when they blow.'
+] as const;
+
+const QUICK_KEYS: ReadonlyArray<readonly [string, string]> = [
+  ['Move', 'W A S D'],
+  ['Fire / ADS', 'LMB / RMB'],
+  ['Sprint · Crouch · Prone', 'SHIFT · C · Z'],
+  ['Jump · Slide', 'SPACE · C'],
+  ['Reload · Interact', 'R · F'],
+  ['Heal · Grenade', 'H · G'],
+  ['Inventory · Map', 'TAB · M'],
+  ['Vehicle · Scoreboard', 'E · P']
+] as const;
+
 export interface MenuContext {
   profile: Profile;
   stats: PlayerStats;
@@ -121,6 +140,12 @@ export function mainMenuScreen(ctx: MenuContext): string {
           </div>
           <div class="hint" style="margin-top:10px;">Auto-detect reads your GPU, cores and memory, then picks a preset. You can override everything in Settings.</div>
         </div>
+        <div class="panel">
+          <div class="panel-title">Drop briefing</div>
+          <div class="briefing">
+            ${BRIEFING.map((b, i) => `<div class="briefing-item"><span class="n">0${i + 1}</span><span>${b}</span></div>`).join('')}
+          </div>
+        </div>
       </div>
       <div class="scroll-area" style="display:flex;flex-direction:column;gap:16px;">
         <div class="panel" style="background:linear-gradient(180deg, rgba(16,23,32,0.7), rgba(8,12,16,0.7));">
@@ -129,7 +154,7 @@ export function mainMenuScreen(ctx: MenuContext): string {
         </div>
         <div class="mode-grid">
           ${MODE_INFO.map((m) => `
-            <div class="mode-card" data-action="mode" data-mode="${m.id}">
+            <div class="mode-card" role="button" tabindex="0" data-action="mode" data-mode="${m.id}">
               <div class="mode-tag">${m.tag}</div>
               <h3>${m.name}</h3>
               <p>${m.body}</p>
@@ -146,8 +171,18 @@ export function mainMenuScreen(ctx: MenuContext): string {
                   <td>#${h.placement} · ${h.kills} kills · ${Math.round(h.damage)} dmg</td>
                 </tr>`).join('')}</table>`}
         </div>
-        <button class="btn ghost" data-action="help">How to play</button>
+        <div class="panel">
+          <div class="panel-title">Field manual</div>
+          <div class="key-grid">
+            ${QUICK_KEYS.map(([label, key]) => `<div class="key-row"><span>${label}</span><kbd>${key}</kbd></div>`).join('')}
+          </div>
+          <button class="btn" data-action="help" style="margin-top:14px;">Open full controls &amp; rules</button>
+        </div>
       </div>
+    </div>
+    <div class="menu-foot">
+      <span><span class="dot"></span>All systems nominal · offline bots ready</span>
+      <span>v1.0 · original build · desktop first</span>
     </div>
   </div>`;
 }

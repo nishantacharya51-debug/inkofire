@@ -73,6 +73,15 @@ export class Ui {
     this.container.appendChild(this.root);
     this.root.addEventListener('click', (e) => this.onClick(e));
     this.root.addEventListener('input', (e) => this.onInput(e as Event));
+    // Cards and other non-button surfaces carry data-action too, so give them
+    // the keyboard activation a real button would have.
+    this.root.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      const el = (e.target as HTMLElement | null)?.closest('[data-action]') as HTMLElement | null;
+      if (!el || el.tagName === 'BUTTON') return;
+      e.preventDefault();
+      el.click();
+    });
     document.body.classList.toggle('touch', this.host.isTouch());
     this.bindTouch();
   }
@@ -151,6 +160,9 @@ export class Ui {
       wrapper.style.pointerEvents = 'auto';
       wrapper.innerHTML = html;
       this.screenEl = wrapper.firstElementChild as HTMLElement;
+      // The UI root is click-through so the canvas keeps the mouse in-game;
+      // every modal surface has to opt back into hit-testing explicitly.
+      this.screenEl.style.pointerEvents = 'auto';
       this.root.appendChild(this.screenEl);
       this.applySegmentState();
     }
@@ -190,6 +202,7 @@ export class Ui {
     wrapper.style.pointerEvents = 'auto';
     wrapper.innerHTML = S.resultsScreen(result);
     this.screenEl = wrapper.firstElementChild as HTMLElement;
+    this.screenEl.style.pointerEvents = 'auto';
     this.root.appendChild(this.screenEl);
     this.currentScreen = 'results';
   }

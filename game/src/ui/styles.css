@@ -78,6 +78,15 @@ canvas#view {
 
 .screen.hidden, .hidden { display: none !important; }
 
+/* The UI root is click-through on purpose: while a match is running the canvas
+   must keep receiving mouse input. Modal surfaces therefore have to opt back
+   into hit-testing themselves — without this rule every menu button silently
+   passes its clicks through to the canvas and appears dead. */
+.screen,
+.overlay {
+  pointer-events: auto;
+}
+
 .top-strip {
   display: flex;
   align-items: center;
@@ -712,3 +721,44 @@ body.touch .touch-controls { display: block; }
   transition: opacity 0.2s, transform 0.4s;
 }
 .kill-banner.show { opacity: 1; transform: translate(-50%, -60%); }
+
+/* --------------------------------------------------------------------------
+   Menu refinement: interaction feedback, denser layout, key reference panel.
+   -------------------------------------------------------------------------- */
+
+.screen { animation: screen-in 0.18s ease-out; }
+@keyframes screen-in {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+
+.menu-body { width: 100%; max-width: 1760px; margin: 0 auto; }
+
+.mode-card:hover { box-shadow: 0 12px 30px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(99, 215, 255, 0.22); }
+.mode-card:active { transform: translateY(0) scale(0.995); }
+.btn:hover { box-shadow: inset 0 0 0 1px rgba(99, 215, 255, 0.16); }
+.btn.primary:hover { box-shadow: 0 8px 26px rgba(43, 143, 181, 0.35), inset 0 0 0 1px rgba(99, 215, 255, 0.35); }
+.btn:focus-visible,
+.mode-card:focus-visible,
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.key-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 2px 18px; }
+.key-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 5px 0; border-bottom: 1px solid var(--line-soft); font-size: 13px;
+}
+.key-row > span { color: var(--text-dim); letter-spacing: 0.6px; }
+.key-row kbd {
+  font-family: var(--mono); font-size: 11px; color: var(--text);
+  background: var(--bg-2); border: 1px solid var(--line); padding: 2px 7px; white-space: nowrap;
+}
+.menu-foot {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 10px 26px; border-top: 1px solid var(--line-soft); color: var(--text-mute);
+  font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase;
+}
+.menu-foot .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px var(--good); display: inline-block; margin-right: 7px; }
+.briefing { display: flex; flex-direction: column; gap: 8px; }
+.briefing-item { display: flex; gap: 10px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
+.briefing-item b { color: var(--accent); font-weight: 600; }
+.briefing-item .n { font-family: var(--mono); color: var(--text-mute); font-size: 11px; padding-top: 2px; }

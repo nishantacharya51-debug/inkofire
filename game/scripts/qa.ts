@@ -93,6 +93,14 @@ function installEnvironment(): Window & typeof globalThis {
   const win = dom.window as unknown as Window & typeof globalThis;
   const w = win as unknown as Record<string, unknown>;
 
+  // Load the real stylesheet: menu hit-testing depends on CSS (the UI root is
+  // click-through, modals opt back in) and that is exactly the class of bug
+  // this harness should never let through again.
+  const styles = fs.readFileSync(path.join(process.cwd(), 'src/ui/styles.css'), 'utf8');
+  const styleEl = win.document.createElement('style');
+  styleEl.textContent = styles;
+  win.document.head.appendChild(styleEl);
+
   // jsdom implements neither matchMedia nor canvas/WebGL.
   w.matchMedia = (query: string) => ({
     matches: false,
@@ -154,6 +162,30 @@ function installEnvironment(): Window & typeof globalThis {
   };
   process.on('unhandledRejection', (reason) => errors.push(`unhandledRejection: ${String(reason)}`));
   return win;
+}
+
+/**
+ * Walks up from every `[data-action]` element and resolves the effective
+ * `pointer-events` value, exactly like a browser's hit-testing would.
+ */
+function effectivePointerEvents(): { total: number; blocked: string[] } {
+  const doc = window.document;
+  const resolve = (el: Element | null): string => {
+    let node: Element | null = el;
+    while (node) {
+      const value = window.getComputedStyle(node).pointerEvents;
+      if (value && value !== 'inherit' && value !== 'unset' && value !== 'revert' && value !== 'revert-layer') {
+        return value;
+      }
+      node = node.parentElement;
+    }
+    return 'auto';
+  };
+  const targets = Array.from(doc.querySelectorAll('[data-action]'));
+  const blocked = targets
+    .filter((el) => resolve(el) === 'none')
+    .map((el) => `${el.tagName.toLowerCase()}[data-action=${el.getAttribute('data-action')}]`);
+  return { total: targets.length, blocked };
 }
 
 /* ------------------------------------------------------------------ */
@@ -283,6 +315,18 @@ async function main(): Promise<void> {
   }
   click('[data-action="back"]');
   check('back returns to the main menu', st().screen === 'menu', st().screen);
+
+  // The UI root is pointer-events:none so the canvas keeps the mouse in-game;
+  // every modal therefore has to opt back in, otherwise buttons look alive but
+  // silently pass clicks through to the canvas.
+  const hit = effectivePointerEvents();
+  check(
+    'menu controls accept pointer input',
+    hit.total > 0 && hit.blocked.length === 0,
+    hit.blocked.length === 0
+      ? `${hit.total} clickable controls`
+      : `${hit.blocked.length}/${hit.total} blocked: ${hit.blocked.slice(0, 3).join(', ')}`
+  );
 
   click('[data-action="armory"]');
   check('armory screen opens', st().screen === 'armory', st().screen);
