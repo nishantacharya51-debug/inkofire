@@ -18,7 +18,9 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # Let one publish finish before the next starts: cancelling halfway through
+  # the /play sync would leave the live site stale.
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -57,7 +59,7 @@ jobs:
       # This makes the game reachable at <site>/play/ even before the Pages
       # source is switched to "GitHub Actions".
       - name: Sync the built game to /play
-        if: github.event_name == 'push'
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
           rm -rf play
           cp -r game/dist play
@@ -79,9 +81,17 @@ jobs:
         with:
           path: game/dist
 
+  # The artifact deploy below is the "proper" Pages route, but this repository
+  # is currently configured to publish the branch itself (Pages source =
+  # "Deploy from a branch"), so the `github-pages` environment refuses a deploy
+  # from a workflow and this job would always show a red X. It is therefore off
+  # by default. Make it live by switching Settings → Pages → Source to
+  # "GitHub Actions" AND adding the repository variable
+  # PAGES_VIA_ACTIONS=true (Settings → Secrets and variables → Actions).
   deploy:
     name: Deploy
     needs: build
+    if: vars.PAGES_VIA_ACTIONS == 'true'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
