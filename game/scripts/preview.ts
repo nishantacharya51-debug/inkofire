@@ -33,6 +33,8 @@ const SS = 2; // supersampling factor
 
 interface Pose {
   label: string;
+  /** Tight framing on the head, used to review the face and hair. */
+  headshot?: boolean;
   /** `yaw` orbits the camera, `dist` frames the body. */
   view?: { yaw: number; pitch: number; dist: number; targetY: number };
   build: () => CharacterRig;
@@ -50,69 +52,58 @@ function actor(moveState: string, speed: number): Actor {
 
 const poses: Pose[] = [
   {
-    label: 'FRONT · NO HELMET',
-    view: { yaw: 180, pitch: 2, dist: 3.1, targetY: 0.95 },
+    label: 'MALE · SPIKY',
+    view: { yaw: 150, pitch: 3, dist: 3.15, targetY: 0.95 },
     build: () => {
-      const rig = new CharacterRig(3, { helmet: false, vest: true, detail: 'high' });
+      const rig = new CharacterRig(0, { helmet: false, vest: true, detail: 'high', variant: 'male', hair: 'spiky' });
       rig.setShowcase(true);
       rig.setWeapon('');
-      rig.tickShowcase(0.8);
+      rig.tickShowcase(0.9);
       return rig;
     }
   },
   {
-    label: 'LOBBY HERO POSE',
-    view: { yaw: 145, pitch: 4, dist: 3.2, targetY: 0.95 },
+    label: 'FEMALE · PONYTAIL',
+    view: { yaw: 150, pitch: 3, dist: 3.05, targetY: 0.9 },
     build: () => {
-      const rig = new CharacterRig(0, { helmet: true, vest: true });
+      const rig = new CharacterRig(4, { helmet: false, vest: true, detail: 'high', variant: 'female', hair: 'ponytail' });
+      rig.setShowcase(true);
+      rig.setWeapon('');
+      rig.tickShowcase(0.9);
+      return rig;
+    }
+  },
+  {
+    label: 'FEMALE · HELMET + RIFLE',
+    view: { yaw: 152, pitch: 4, dist: 3.2, targetY: 0.9 },
+    build: () => {
+      const rig = new CharacterRig(2, { helmet: true, vest: true, detail: 'high', variant: 'female', hair: 'bob' });
       rig.setShowcase(true);
       rig.setWeapon('vk77');
-      rig.tickShowcase(1.4);
-      return rig;
-    }
-  },
-  {
-    label: 'RUN · WEAPON UP',
-    build: () => {
-      const rig = new CharacterRig(2, { helmet: true, vest: true });
-      rig.setWeapon('vk77');
-      const a = actor('RUN', 6.2);
-      for (let i = 0; i < 30; i++) rig.update(a, 1 / 60, -0.15);
-      return rig;
-    }
-  },
-  {
-    label: 'CROUCH · AIMING',
-    build: () => {
-      const rig = new CharacterRig(4, { helmet: true, vest: false });
-      rig.setWeapon('hornet9');
-      const a = actor('CROUCH_IDLE', 0);
-      a.stance = 'CROUCH';
-      a.adsProgress = 0.9;
-      for (let i = 0; i < 30; i++) rig.update(a, 1 / 60, -0.05);
+      rig.tickShowcase(1.2);
       return rig;
     }
   },
   {
     label: 'MATCH · LOW DETAIL',
-    view: { yaw: 200, pitch: 6, dist: 3.9, targetY: 0.95 },
+    view: { yaw: 205, pitch: 6, dist: 3.7, targetY: 0.95 },
     build: () => {
-      const rig = new CharacterRig(5, { helmet: true, vest: true, detail: 'low' });
+      const rig = new CharacterRig(8, { helmet: true, vest: true, detail: 'low', variant: 'male', hair: 'short' });
       rig.setWeapon('hornet9');
-      const a = actor('IDLE', 0);
-      for (let i = 0; i < 12; i++) rig.update(a, 1 / 60, -0.05);
+      const a = actor('RUN', 5.5);
+      for (let i = 0; i < 18; i++) rig.update(a, 1 / 60, -0.06);
       return rig;
     }
   },
   {
     label: 'PRONE',
-    view: { yaw: 252, pitch: 20, dist: 2.7, targetY: 0.34 },
+    view: { yaw: 250, pitch: 18, dist: 2.7, targetY: 0.34 },
     build: () => {
-      const rig = new CharacterRig(1, { helmet: false, vest: true });
+      const rig = new CharacterRig(6, { helmet: true, vest: true, detail: 'high', variant: 'male', hair: 'short' });
       rig.setWeapon('specter');
       const a = actor('PRONE', 0);
       a.stance = 'PRONE';
-      for (let i = 0; i < 30; i++) rig.update(a, 1 / 60, 0);
+      for (let i = 0; i < 25; i++) rig.update(a, 1 / 60, 0);
       return rig;
     }
   }
@@ -152,7 +143,7 @@ function collect(rig: CharacterRig): Tri[] {
     const material = (Array.isArray(mesh.material) ? mesh.material[0] : mesh.material) as THREE.MeshStandardMaterial;
     const color = material.color ?? new THREE.Color(0x808080);
     // Slight per-triangle tone variation reads like fabric/skin grain.
-    const spec = material.metalness > 0.3 ? 0.35 : material.roughness > 0.8 ? 0.06 : 0.16;
+    const spec = material.metalness > 0.3 ? 0.22 : material.roughness > 0.8 ? 0.04 : 0.1;
     for (let i = 0; i < count; i += 3) {
       const i0 = index ? index.getX(i) : i;
       const i1 = index ? index.getX(i + 1) : i + 1;
@@ -194,14 +185,18 @@ function makeView(yawDeg: number, pitchDeg: number, dist: number, targetY: numbe
   // explicitly (without it the camera would sit at the world origin).
   const rotation = new THREE.Matrix4().lookAt(eye, target, new THREE.Vector3(0, 1, 0)).invert();
   const view = rotation.multiply(new THREE.Matrix4().makeTranslation(-eye.x, -eye.y, -eye.z));
-  const fov = 34;
+  const fov = 30;
   const f = 1 / Math.tan((fov * Math.PI) / 360);
   return { view, eye, f, aspect };
 }
 
 function renderRig(rig: CharacterRig, yawDeg: number, pitchDeg: number, dist: number, targetY: number): Uint8Array {
-  const w = PANEL_W * SS;
-  const h = PANEL_H * SS;
+  return renderRigSized(rig, yawDeg, pitchDeg, dist, targetY, PANEL_W, PANEL_H);
+}
+
+function renderRigSized(rig: CharacterRig, yawDeg: number, pitchDeg: number, dist: number, targetY: number, panelW: number, panelH: number): Uint8Array {
+  const w = panelW * SS;
+  const h = panelH * SS;
   const aspect = w / h;
   const color = new Float32Array(w * h * 3);
   const depth = new Float32Array(w * h).fill(Infinity);
@@ -219,8 +214,12 @@ function renderRig(rig: CharacterRig, yawDeg: number, pitchDeg: number, dist: nu
   }
 
   const { view, eye, f, aspect: asp } = makeView(yawDeg, pitchDeg, dist, targetY, aspect);
-  const light = new THREE.Vector3(-0.45, 0.86, 0.6).normalize();
-  const rim = new THREE.Vector3(0.7, 0.2, -0.65).normalize();
+  // Key light comes from the camera side (raised and offset to the right) so the
+  // surface facing the viewer is always readable; a cool rim light separates the
+  // silhouette from the background.
+  const yawR = (yawDeg * Math.PI) / 180;
+  const light = new THREE.Vector3(Math.sin(yawR + 0.5) * 0.75, 0.62, Math.cos(yawR + 0.5) * 0.75).normalize();
+  const rim = new THREE.Vector3(-Math.sin(yawR), 0.15, -Math.cos(yawR)).normalize();
   const pm = new THREE.Matrix4().makePerspective(-1, 1, 1, -1, 1, 40);
   void pm;
   void asp;
@@ -257,7 +256,7 @@ function renderRig(rig: CharacterRig, yawDeg: number, pitchDeg: number, dist: nu
     const wn = new THREE.Vector3(t.nx, t.ny, t.nz).normalize();
     const ndl = Math.max(0, wn.dot(light));
     const rimF = Math.pow(Math.max(0, wn.dot(rim)), 2) * 0.5;
-    const shade = 0.24 + ndl * 0.86 + rimF;
+    const shade = 0.3 + ndl * 0.72 + rimF;
     const lit = [t.r * shade, t.gg * shade, t.b * shade];
 
     for (let y = minY; y <= maxY; y++) {
@@ -282,9 +281,9 @@ function renderRig(rig: CharacterRig, yawDeg: number, pitchDeg: number, dist: nu
   void eye;
 
   // Downsample, tone-map and encode.
-  const out = new Uint8Array(PANEL_W * PANEL_H * 3);
-  for (let y = 0; y < PANEL_H; y++) {
-    for (let x = 0; x < PANEL_W; x++) {
+  const out = new Uint8Array(panelW * panelH * 3);
+  for (let y = 0; y < panelH; y++) {
+    for (let x = 0; x < panelW; x++) {
       let r = 0; let gg = 0; let b = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx2 = 0; sx2 < SS; sx2++) {
@@ -293,7 +292,7 @@ function renderRig(rig: CharacterRig, yawDeg: number, pitchDeg: number, dist: nu
         }
       }
       const n = SS * SS;
-      const o = (y * PANEL_W + x) * 3;
+      const o = (y * panelW + x) * 3;
       out[o] = gamma(r / n);
       out[o + 1] = gamma(gg / n);
       out[o + 2] = gamma(b / n);
@@ -383,6 +382,37 @@ function main(): void {
       sheet[o] = 40; sheet[o + 1] = 46; sheet[o + 2] = 54;
     }
   });
+
+  // Head close-ups (face + hair review) as a second image.
+  const heads = [
+    { label: 'MALE · SPIKY', idx: 0, variant: 'male' as const, hair: 'spiky' as const },
+    { label: 'MALE · SHORT', idx: 3, variant: 'male' as const, hair: 'short' as const },
+    { label: 'FEMALE · BOB', idx: 2, variant: 'female' as const, hair: 'bob' as const },
+    { label: 'FEMALE · PONYTAIL', idx: 4, variant: 'female' as const, hair: 'ponytail' as const },
+    { label: 'MALE · BUN (HELMET OFF)', idx: 8, variant: 'male' as const, hair: 'long' as const }
+  ];
+  const headW = 300;
+  const headH = 340;
+  const headSheet = new Uint8Array(headW * heads.length * headH * 3);
+  heads.forEach((h, i) => {
+    const rig = new CharacterRig(h.idx, { helmet: false, vest: true, detail: 'high', variant: h.variant, hair: h.hair });
+    rig.setShowcase(true);
+    rig.tickShowcase(0.7);
+    const panel = renderRigSized(rig, 178, 2, 0.82, 1.62, headW, headH);
+    for (let y = 0; y < headH; y++) {
+      const src = y * headW * 3;
+      const dst = (y * headW * heads.length + i * headW) * 3;
+      headSheet.set(panel.subarray(src, src + headW * 3), dst);
+    }
+    for (let y = 0; y < headH; y++) {
+      const o = (y * headW * heads.length + i * headW) * 3;
+      headSheet[o] = 40; headSheet[o + 1] = 46; headSheet[o + 2] = 54;
+    }
+    console.log(`   HEAD ${h.label}`);
+  });
+  const headPath = path.join(process.cwd(), 'docs', 'operator-faces.png');
+  fs.writeFileSync(headPath, encodePng(headW * heads.length, headH, headSheet));
+  console.log(`wrote ${path.relative(process.cwd(), headPath)} (${headW * heads.length}x${headH})`);
 
   const outPath = path.join(process.cwd(), 'docs', 'operator-preview.png');
   fs.mkdirSync(path.dirname(outPath), { recursive: true });

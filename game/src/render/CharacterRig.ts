@@ -31,12 +31,16 @@ export interface CharacterPalette {
 }
 
 export const SKINS: CharacterPalette[] = [
-  { skin: 0xd8a882, hair: 0x241a12, shirt: 0x4a5460, pants: 0x3a4048, boots: 0x2a2a2c, vest: 0x39424d, helmet: 0x33383f, accent: 0x7ad0b0 },
-  { skin: 0xa9714c, hair: 0x1a1310, shirt: 0x5a4a3a, pants: 0x3d3a34, boots: 0x26221e, vest: 0x4a4436, helmet: 0x3a352c, accent: 0xd0a05a },
-  { skin: 0xe8c39e, hair: 0x6a4a28, shirt: 0x35485a, pants: 0x2f3a44, boots: 0x232629, vest: 0x2d3a44, helmet: 0x2a3138, accent: 0x5a9ad0 },
-  { skin: 0x8a5b3a, hair: 0x120d0a, shirt: 0x44543f, pants: 0x3a4034, boots: 0x22241f, vest: 0x3a4534, helmet: 0x2f382c, accent: 0x9ad05a },
-  { skin: 0xc9967a, hair: 0x3a2a1a, shirt: 0x5a3540, pants: 0x33303a, boots: 0x26222a, vest: 0x453040, helmet: 0x3a2a38, accent: 0xd05a7a },
-  { skin: 0xf0d0b0, hair: 0xc8b070, shirt: 0x6a6a72, pants: 0x44444c, boots: 0x2c2c33, vest: 0x55555e, helmet: 0x44444d, accent: 0xf0d05a }
+  { skin: 0xe0b088, hair: 0x241a12, shirt: 0x2f6f6a, pants: 0x2a3a3f, boots: 0x232629, vest: 0x1f4a48, helmet: 0x27333a, accent: 0x6ee6d0 },
+  { skin: 0xa9714c, hair: 0x1a1310, shirt: 0x7a3b2e, pants: 0x39332c, boots: 0x241f1b, vest: 0x54301f, helmet: 0x332a22, accent: 0xf0a24a },
+  { skin: 0xf0cbac, hair: 0xd9b45c, shirt: 0x30506f, pants: 0x2b3644, boots: 0x22262b, vest: 0x24405c, helmet: 0x2b3540, accent: 0x63d7ff },
+  { skin: 0x8a5b3a, hair: 0x120d0a, shirt: 0x4a5c33, pants: 0x333a2c, boots: 0x22241f, vest: 0x38452a, helmet: 0x2c3324, accent: 0xa8e05a },
+  { skin: 0xc98d6f, hair: 0x5a2f1c, shirt: 0x6c3552, pants: 0x342b38, boots: 0x27222a, vest: 0x4c2a45, helmet: 0x3a2a3c, accent: 0xf0629a },
+  { skin: 0xe6c6a4, hair: 0x8c8f96, shirt: 0x5c6070, pants: 0x3d414c, boots: 0x2a2c33, vest: 0x444a5c, helmet: 0x363b48, accent: 0xb9a0ff },
+  { skin: 0xd9a678, hair: 0x3a2416, shirt: 0xb06a2a, pants: 0x3c3428, boots: 0x2a241c, vest: 0x7a4a1e, helmet: 0x3a3128, accent: 0xffd24a },
+  { skin: 0x9c6b47, hair: 0x201611, shirt: 0x2b5570, pants: 0x2e3a42, boots: 0x24282c, vest: 0x1f4157, helmet: 0x2a333c, accent: 0x7ad0ff },
+  { skin: 0xf3d3b3, hair: 0xc23c2e, shirt: 0x40404a, pants: 0x33333c, boots: 0x26262c, vest: 0x2e2e38, helmet: 0x35353f, accent: 0xff8a6a },
+  { skin: 0xb87f56, hair: 0x0f0c0a, shirt: 0x3f5a3a, pants: 0x36402f, boots: 0x24261f, vest: 0x2f4429, helmet: 0x2b3226, accent: 0x8ce07a }
 ];
 
 /* ------------------------------------------------------------------ */
@@ -59,7 +63,22 @@ function cloth(color: number): THREE.MeshStandardMaterial { return mat(color, 0.
 function leather(color: number): THREE.MeshStandardMaterial { return mat(color, 0.62, 0.06, 'leather'); }
 function gear(color: number): THREE.MeshStandardMaterial { return mat(color, 0.55, 0.22, 'gear'); }
 function metal(color: number): THREE.MeshStandardMaterial { return mat(color, 0.34, 0.85, 'metal'); }
-function skinMat(color: number): THREE.MeshStandardMaterial { return mat(color, 0.58, 0.0, 'skin'); }
+function skinMat(color: number, detail = false): THREE.MeshStandardMaterial { return mat(color, detail ? 0.52 : 0.58, 0.0, detail ? 'skin-hi' : 'skin'); }
+
+/**
+ * Decal materials (face features, eyes, brows) sit on top of the skull.
+ * Coincident surfaces z-fight, so these pull toward the camera in depth —
+ * the same trick a real renderer uses for decals, and it keeps faces clean at
+ * any distance instead of shimmering.
+ */
+function decalMat(color: number, roughness: number, metalness: number, key: string): THREE.MeshStandardMaterial {
+  const m = mat(color, roughness, metalness, key);
+  m.polygonOffset = true;
+  m.polygonOffsetFactor = -2.5;
+  m.polygonOffsetUnits = -6;
+  return m;
+}
+function hairMat(color: number): THREE.MeshStandardMaterial { return mat(color, 0.86, 0.06, 'hair'); }
 
 /** Geometry cache — keyed by a stable string, shared between all rigs. */
 const geomCache = new Map<string, THREE.BufferGeometry>();
@@ -141,8 +160,12 @@ function roundBox(w: number, h: number, d: number, r: number, x: number, y: numb
 }
 
 /** Half-sphere shell, used for helmets, hair caps and shoulders. */
-function dome(r: number, x: number, y: number, z: number, phiLength = Math.PI * 2, scale?: [number, number, number], wSeg = 12, hSeg = 7): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(r, wSeg, hSeg, 0, phiLength, 0, Math.PI * 0.55);
+function tapDefault(rTop: number, rBot: number, h: number, x: number, y: number, z: number, squashZ = 1, seg = 12): THREE.BufferGeometry {
+  return taper(rTop, rBot, h, x, y, z, seg, squashZ);
+}
+
+function dome(r: number, x: number, y: number, z: number, phiLength = Math.PI * 2, scale?: [number, number, number], wSeg = 12, hSeg = 7, sweep = 0.55): THREE.BufferGeometry {
+  const g = new THREE.SphereGeometry(r, wSeg, hSeg, 0, phiLength, 0, Math.PI * sweep);
   if (scale) g.scale(scale[0], scale[1], scale[2]);
   g.translate(x, y, z);
   return g;
@@ -203,7 +226,48 @@ export interface RigBones {
   chute: THREE.Group | null;
 }
 
-interface BodyParts {
+
+/** Male / female operator builds, original designs in a stylized-real style. */
+export type BodyVariant = 'male' | 'female';
+
+/** Hair silhouettes: the fastest way a character reads as an individual. */
+export type HairStyle = 'short' | 'spiky' | 'bob' | 'ponytail' | 'bun' | 'long';
+
+/** Body proportions, tuned per variant. Heights stay close so hitboxes stay fair. */
+interface Proportions {
+  /** Hip height above the deck (drives the whole stance). */
+  hipY: number;
+  shoulderX: number;
+  chestR: number;
+  chestSquash: number;
+  waistR: number;
+  waistSquash: number;
+  hipR: number;
+  hipSquash: number;
+  chestMass: [number, number, number];
+  chestMassScale: number;
+  armR: number;
+  legR: number;
+  headScale: number;
+  bust: boolean;
+}
+
+const PROPS: Record<BodyVariant, Proportions> = {
+  male: {
+    hipY: 0.985, shoulderX: 0.216, chestR: 0.183, chestSquash: 0.68,
+    waistR: 0.152, waistSquash: 0.72, hipR: 0.145, hipSquash: 0.74,
+    chestMass: [1.30, 0.66, 0.72], chestMassScale: 1.0,
+    armR: 1.0, legR: 1.0, headScale: 0.96, bust: false
+  },
+  female: {
+    hipY: 0.955, shoulderX: 0.176, chestR: 0.168, chestSquash: 0.70,
+    waistR: 0.118, waistSquash: 0.76, hipR: 0.152, hipSquash: 0.70,
+    chestMass: [1.16, 0.60, 0.70], chestMassScale: 0.94,
+    armR: 0.9, legR: 0.94, headScale: 0.95, bust: true
+  }
+};
+
+export interface BodyParts {
   pelvis: THREE.Mesh;
   torso: THREE.Mesh;
   vest: THREE.Mesh;
@@ -221,12 +285,191 @@ interface BodyParts {
   shinL: THREE.Mesh;
   shinR: THREE.Mesh;
   head: THREE.Mesh;
+  face: THREE.Mesh;
+  eyeWhite: THREE.Mesh;
+  eyeIris: THREE.Mesh;
+  brows: THREE.Mesh;
+  hair: THREE.Mesh;
+  headGear: THREE.Mesh;
   visor: THREE.Mesh;
+  accent: THREE.Mesh;
   handL: THREE.Mesh;
   handR: THREE.Mesh;
-  headGear: THREE.Mesh;
-  face: THREE.Mesh;
-  accent: THREE.Mesh;
+}
+
+/* ------------------------------------------------------------------ */
+/* Head: skull, real facial features and a laid-out hairline           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Facial features are modelled rather than painted: sclera + iris + pupil,
+ * brow ridge, nose wedge, lips and cheekbones. They sit slightly proud of the
+ * skull so they never z-fight, and the spacing follows real proportions
+ * (eye width = inter-eye gap, ears from brow to nose base).
+ */
+function buildFace(SEG: { ball: number }): {
+  face: THREE.BufferGeometry;
+  eyeWhite: THREE.BufferGeometry;
+  eyeIris: THREE.BufferGeometry;
+  brows: THREE.BufferGeometry;
+} {
+  const sub = Math.max(7, SEG.ball - 3);
+  // Face structure: brow ridge, cheekbones, nose, lips, chin, ears.
+  const face = mergeAll([
+    roundBox(0.112, 0.024, 0.05, 0.011, 0, 0.048, -0.055),      // brow ridge
+    sphereG(0.03, 0.058, 0.002, -0.042, sub, sub - 2),           // cheekbone
+    sphereG(0.03, -0.058, 0.002, -0.042, sub, sub - 2),
+    roundBox(0.023, 0.05, 0.03, 0.008, 0, 0.014, -0.082),     // nose bridge
+    roundBox(0.032, 0.028, 0.034, 0.011, 0, -0.016, -0.09),     // nose tip
+    roundBox(0.042, 0.012, 0.018, 0.006, 0, -0.048, -0.082),      // upper lip
+    roundBox(0.046, 0.014, 0.02, 0.006, 0, -0.064, -0.08),    // lower lip
+    roundBox(0.058, 0.03, 0.034, 0.012, 0, -0.086, -0.05),      // chin
+    sphereG(0.026, 0.103, -0.004, 0.01, sub, sub - 2, [0.42, 1.0, 0.72]),  // ears
+    sphereG(0.026, -0.103, -0.004, 0.01, sub, sub - 2, [0.42, 1.0, 0.72])
+  ]);
+
+  // Eye sockets: eyeball sits inside a socket, so lids read as a shadow line.
+  const socket = (x: number): THREE.BufferGeometry => sphereG(0.021, x, 0.03, -0.07, sub, sub - 2, [1.15, 0.9, 0.55]);
+  const eyeWhite = mergeAll([
+    sphereG(0.0135, 0.036, 0.026, -0.07, sub, sub - 2, [1.15, 0.9, 0.62]),
+    sphereG(0.0135, -0.036, 0.026, -0.07, sub, sub - 2, [1.15, 0.9, 0.62])
+  ]);
+  const eyeIris = mergeAll([
+    sphereG(0.0076, 0.036, 0.026, -0.0785, sub - 1, sub - 3, [1.0, 1.0, 0.5]),
+    sphereG(0.0076, -0.036, 0.026, -0.0785, sub - 1, sub - 3, [1.0, 1.0, 0.5]),
+    sphereG(0.0034, 0.036, 0.026, -0.0825, 6, 5),
+    sphereG(0.0034, -0.036, 0.026, -0.0825, 6, 5)
+  ]);
+  const brows = mergeAll([
+    roundBox(0.042, 0.01, 0.016, 0.004, 0.038, 0.052, -0.072, 0.003),
+    roundBox(0.042, 0.01, 0.016, 0.004, -0.038, 0.052, -0.072, 0.003)
+  ]);
+  void socket;
+  return { face, eyeWhite, eyeIris, brows };
+}
+
+/** Skull + jaw, shared by every hair style. */
+function buildSkull(SEG: { ball: number; torso: number }, scale: number): THREE.BufferGeometry {
+  const ball = (r: number, x: number, y: number, z: number, sc?: [number, number, number]): THREE.BufferGeometry =>
+    sphereG(r * scale, x * scale, y * scale, z * scale, SEG.ball, Math.max(6, Math.round(SEG.ball * 0.75)), sc);
+  return mergeAll([
+    ball(0.113, 0, 0.016, 0.016, [0.96, 1.04, 0.99]),        // cranium
+    ball(0.098, 0, -0.03, 0.004, [0.93, 0.9, 0.99]),         // mid face volume
+    tapDefault(0.088, 0.05, 0.14, 0, -0.07, -0.004, 0.86),   // jaw taper
+    ball(0.05, 0, -0.02, 0.078),                            // occiput
+  ]);
+}
+
+/**
+ * Six original hair silhouettes.
+ *
+ * The cap is deliberately shallow (a little over a quarter sphere) and pushed
+ * back, so it covers the cranium and forehead but never the eyes — a hair mesh
+ * that swallows the face is the classic procedural-character mistake. Longer
+ * styles add mass *behind* the head, never in front of it.
+ */
+function buildHair(style: HairStyle, SEG: { ball: number; torso: number }): THREE.BufferGeometry | null {
+  const wSeg = SEG.ball;
+  const hSeg = Math.max(6, Math.round(SEG.ball * 0.6));
+  /** Cranium cap: shallow, pushed back and up off the skull. */
+  const cap = (r: number, y: number, sc: [number, number, number], sweep = 0.40): THREE.BufferGeometry =>
+    dome(r, 0, y, 0.022, Math.PI * 2, sc, wSeg, hSeg, sweep);
+  /** Hair mass behind/around the skull (never across the face). */
+  const backMass = (rTop: number, rBot: number, h: number, y: number, z: number, squash = 0.72): THREE.BufferGeometry =>
+    taper(rTop, rBot, h, 0, y, z, wSeg, squash);
+  /** Fringe: a thin sweep that stops above the brow line (y ≈ 0.055). */
+  const fringe = (w: number, h: number, d: number, x: number, y: number, z: number, rotZ = 0, rotX = -0.22): THREE.BufferGeometry => {
+    const g = roundBox(w, h, d, Math.min(w, h) * 0.34, 0, 0, 0, 0.006);
+    if (rotZ) g.rotateZ(rotZ);
+    if (rotX) g.rotateX(rotX);
+    g.translate(x, y, z);
+    return g;
+  };
+  /** Tapered lock hanging beside the temple. */
+  const lock = (rTop: number, rBot: number, h: number, x: number, y: number, z: number): THREE.BufferGeometry =>
+    taper(rTop, rBot, h, x, y, z, wSeg, 0.85);
+
+  switch (style) {
+    case 'spiky': {
+      const parts: THREE.BufferGeometry[] = [
+        cap(0.122, 0.03, [1.0, 0.92, 1.03]),
+        fringe(0.185, 0.055, 0.075, 0.008, 0.078, -0.052, 0.06, -0.28),
+        lock(0.044, 0.034, 0.115, 0.1, -0.004, 0.024),
+        lock(0.044, 0.034, 0.115, -0.1, -0.004, 0.024)
+      ];
+      const spikes: Array<[number, number, number, number, number, number]> = [
+        [-0.062, 0.108, -0.008, 0.42, -0.3, 0.15],
+        [-0.018, 0.122, -0.02, 0.5, -0.1, -0.1],
+        [0.04, 0.118, -0.006, 0.44, 0.26, 0.08],
+        [0.082, 0.098, 0.03, 0.4, 0.5, 0.2],
+        [-0.088, 0.092, 0.032, 0.38, -0.52, -0.16],
+        [0.016, 0.1, 0.072, 0.34, 0.12, 0.75],
+        [-0.05, 0.09, 0.07, 0.34, -0.25, 0.85]
+      ];
+      for (const [x, y, z, rx, rz, ry] of spikes) {
+        const g = roundBox(0.042, 0.07, 0.042, 0.015, 0, 0, 0, 0.005);
+        g.rotateX(rx); g.rotateZ(rz); g.rotateY(ry);
+        g.translate(x, y, z);
+        parts.push(g);
+      }
+      return mergeAll(parts);
+    }
+    case 'short':
+      return mergeAll([
+        cap(0.12, 0.03, [1.0, 0.9, 1.02]),
+        fringe(0.165, 0.042, 0.07, 0.006, 0.074, -0.048, 0.05, -0.26),
+        backMass(0.11, 0.086, 0.11, -0.048, 0.062, 0.7),
+        lock(0.038, 0.03, 0.07, 0.1, 0.0, 0.022),
+        lock(0.038, 0.03, 0.07, -0.1, 0.0, 0.022)
+      ]);
+    case 'bob': {
+      // Chin-length: side masses end level with the jaw, straight fringe above the brow.
+      return mergeAll([
+        cap(0.126, 0.028, [1.02, 0.94, 1.04], 0.44),
+        backMass(0.125, 0.1, 0.30, -0.088, 0.05, 0.7),
+        backMass(0.105, 0.082, 0.16, -0.245, 0.055, 0.62),
+        lock(0.055, 0.05, 0.26, 0.104, -0.075, 0.01),
+        lock(0.055, 0.05, 0.26, -0.104, -0.075, 0.01),
+        fringe(0.188, 0.062, 0.07, 0.0, 0.072, -0.058, 0.02, -0.22),
+        fringe(0.07, 0.05, 0.06, 0.07, 0.058, -0.052, 0.18, -0.3)
+      ]);
+    }
+    case 'ponytail': {
+      return mergeAll([
+        cap(0.123, 0.03, [1.0, 0.92, 1.03], 0.42),
+        fringe(0.175, 0.05, 0.07, 0.004, 0.076, -0.05, 0.04, -0.26),
+        lock(0.044, 0.035, 0.13, 0.1, -0.008, 0.024),
+        lock(0.044, 0.035, 0.13, -0.1, -0.008, 0.024),
+        backMass(0.1, 0.086, 0.1, -0.04, 0.07, 0.7),
+        // Tail gathered high at the back, hanging clear of the shoulders.
+        backMass(0.052, 0.04, 0.24, 0.02, 0.16, 0.9),
+        backMass(0.042, 0.02, 0.2, -0.14, 0.215, 0.9),
+        sphereG(0.03, 0, 0.062, 0.112, SEG.ball - 2, SEG.ball - 4)
+      ]);
+    }
+    case 'bun': {
+      return mergeAll([
+        cap(0.122, 0.03, [1.0, 0.92, 1.03], 0.42),
+        fringe(0.17, 0.05, 0.068, 0.006, 0.076, -0.05, 0.05, -0.26),
+        lock(0.042, 0.033, 0.105, 0.1, -0.004, 0.024),
+        lock(0.042, 0.033, 0.105, -0.1, -0.004, 0.024),
+        sphereG(0.055, 0, 0.1, 0.1, SEG.ball, SEG.ball - 2, [1.0, 1.0, 0.88])
+      ]);
+    }
+    case 'long': {
+      return mergeAll([
+        cap(0.128, 0.028, [1.02, 0.95, 1.05], 0.44),
+        // Long mass down the back, tapering to the shoulder blades.
+        backMass(0.13, 0.108, 0.34, -0.1, 0.05, 0.66),
+        backMass(0.105, 0.07, 0.24, -0.36, 0.058, 0.6),
+        lock(0.052, 0.045, 0.3, 0.106, -0.095, 0.015),
+        lock(0.052, 0.045, 0.3, -0.106, -0.095, 0.015),
+        fringe(0.185, 0.058, 0.07, 0.0, 0.074, -0.055, 0.03, -0.24)
+      ]);
+    }
+    default:
+      return null;
+  }
 }
 
 const bodyCache = new Map<string, BodyParts>();
@@ -239,14 +482,23 @@ function variantKey(useHelmet: boolean, useVest: boolean): string {
  * Builds (once per variant) the full set of body meshes. Meshes reference
  * shared geometry, so clones are cheap — only the materials differ per rig.
  */
-function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean, detail: RigDetail = 'low'): BodyParts {
-  const key = `${variantKey(useHelmet, useVest)}_${detail}_${palette.shirt}_${palette.vest}_${palette.pants}_${palette.boots}_${palette.helmet}_${palette.skin}_${palette.hair}_${palette.accent}`;
+function bodyFor(
+  palette: CharacterPalette,
+  useHelmet: boolean,
+  useVest: boolean,
+  detail: RigDetail = 'low',
+  variant: BodyVariant = 'male',
+  hairStyle: HairStyle = 'short'
+): BodyParts {
+  const key = `${variantKey(useHelmet, useVest)}_${detail}_${variant}_${hairStyle}_${palette.shirt}_${palette.vest}_${palette.pants}_${palette.boots}_${palette.helmet}_${palette.skin}_${palette.accent}`;
   const cached = bodyCache.get(key);
   if (cached) return cached;
 
   const p = palette;
-  // Radial segment counts: doubled-up in the lobby, trimmed in a 60-player match.
-  const SEG = detail === 'high' ? { limb: 14, cap: 6, torso: 18, ball: 16, body: 14, band: 20 } : { limb: 9, cap: 3, torso: 11, ball: 11, body: 12, band: 12 };
+  const pr = PROPS[variant];
+  const SEG = detail === 'high'
+    ? { limb: 14, cap: 6, torso: 18, ball: 16, band: 20 }
+    : { limb: 9, cap: 3, torso: 11, ball: 9, band: 12 };
   const cap = (r: number, len: number, x: number, y: number, z: number, axis: 'y' | 'x' | 'z' = 'y'): THREE.BufferGeometry =>
     capsule(r, len, x, y, z, axis, SEG.limb, SEG.cap);
   const tap = (rTop: number, rBot: number, h: number, x: number, y: number, z: number, squashZ = 1): THREE.BufferGeometry =>
@@ -256,162 +508,134 @@ function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean
 
   /* ---- pelvis + belt ---- */
   const pelvis = meshOf(`pelvis|${key}`, () => mergeAll([
-    tap(0.155, 0.135, 0.24, 0, 0.0, 0, 0.72),
-    roundBox(0.30, 0.10, 0.23, 0.05, 0, -0.10, 0.005) // hip pads
+    tap(pr.hipR, pr.hipR * 0.88, 0.24, 0, 0.0, 0, pr.hipSquash),
+    roundBox(pr.hipR * 1.82, 0.085, 0.2, 0.042, 0, -0.095, 0.005)
   ]), cloth(p.pants), 'pelvis');
 
   const belt = meshOf(`belt|${key}`, () => mergeAll([
-    band(0.176, 0.16, 0.055, 0, 0.055, 0, 0.74, SEG.band),
-    roundBox(0.075, 0.075, 0.045, 0.018, 0.10, 0.03, -0.135),  // pouch
-    roundBox(0.075, 0.075, 0.045, 0.018, -0.10, 0.03, -0.135), // pouch
-    roundBox(0.05, 0.05, 0.03, 0.012, 0, 0.035, 0.145)         // buckle
+    band(pr.hipR * 1.12, pr.hipR * 1.02, 0.055, 0, 0.055, 0, pr.hipSquash, SEG.band),
+    roundBox(0.07, 0.07, 0.042, 0.017, 0.10, 0.03, -0.13),
+    roundBox(0.07, 0.07, 0.042, 0.017, -0.10, 0.03, -0.13),
+    roundBox(0.048, 0.048, 0.028, 0.012, 0, 0.035, 0.14)
   ]), leather(p.boots), 'belt');
 
   /* ---- torso ---- */
-  const torso = meshOf(`torso|${key}`, () => mergeAll([
-    tap(0.185, 0.152, 0.40, 0, 0.20, 0, 0.66),   // ribcage → waist
-    tap(0.16, 0.185, 0.09, 0, 0.02, 0, 0.7),     // waist join
-    ball(0.112, 0, 0.40, 0, [1.34, 0.66, 0.70]), // upper chest mass
-    roundBox(0.225, 0.035, 0.155, 0.015, 0, 0.45, 0)       // collar bone shelf
-  ]), cloth(p.shirt), 'torso');
-
-  const vestParts: THREE.BufferGeometry[] = [
-    tap(0.188, 0.172, 0.29, 0, 0.245, 0, 0.70),   // carrier body
-    roundBox(0.215, 0.155, 0.04, 0.016, 0, 0.275, -0.118), // front plate
-    roundBox(0.20, 0.15, 0.038, 0.015, 0, 0.275, 0.11),   // back plate
-    roundBox(0.075, 0.055, 0.028, 0.011, 0.075, 0.345, -0.138), // mag pouch
-    roundBox(0.075, 0.055, 0.028, 0.011, -0.02, 0.345, -0.138),
-    roundBox(0.055, 0.085, 0.032, 0.011, -0.115, 0.325, -0.132), // radio
-    roundBox(0.16, 0.022, 0.02, 0.008, 0, 0.185, -0.155),   // molle row
-    roundBox(0.16, 0.022, 0.02, 0.008, 0, 0.225, -0.155),
-    roundBox(0.05, 0.16, 0.03, 0.012, 0.145, 0.33, -0.10),
-    roundBox(0.05, 0.16, 0.03, 0.012, -0.145, 0.33, -0.10)
+  const torsoParts: THREE.BufferGeometry[] = [
+    tap(pr.chestR, pr.waistR, 0.40, 0, 0.20, 0, pr.chestSquash),
+    tap(pr.waistR * 0.98, pr.chestR * 0.94, 0.085, 0, 0.015, 0, pr.waistSquash),
+    sphereG(0.112 * pr.chestMassScale, 0, 0.40, 0, SEG.ball, SEG.ball - 2, pr.chestMass),
+    roundBox(pr.shoulderX * 1.12, 0.045, 0.16, 0.016, 0, 0.4, 0)
   ];
-  const vest = meshOf(`vest|${key}`, () => mergeAll(vestParts), gear(p.vest), 'vest');
+  if (pr.bust) {
+    // Chest shaping: two shallow volumes, not spheres bolted on.
+    torsoParts.push(sphereG(0.056, 0.048, 0.3, -0.04, SEG.ball - 2, SEG.ball - 4, [1.0, 0.72, 0.66]));
+    torsoParts.push(sphereG(0.056, -0.048, 0.3, -0.04, SEG.ball - 2, SEG.ball - 4, [1.0, 0.72, 0.66]));
+  }
+  const torso = meshOf(`torso|${key}`, () => mergeAll(torsoParts), cloth(p.shirt), 'torso');
+
+  const vest = meshOf(`vest|${key}`, () => mergeAll([
+    tap(pr.chestR + 0.006, pr.waistR + 0.012, 0.30, 0, 0.185, 0, pr.chestSquash + 0.02),
+    roundBox(pr.chestR * 1.1, pr.bust ? 0.15 : 0.135, 0.036, 0.014, 0, 0.235, -0.112 - pr.chestR * 0.02),
+    roundBox(pr.chestR * 1.04, pr.bust ? 0.15 : 0.135, 0.034, 0.013, 0, 0.235, 0.104),
+    roundBox(0.065, 0.048, 0.026, 0.01, 0.066, 0.30, -0.13),
+    roundBox(0.065, 0.048, 0.026, 0.01, -0.018, 0.30, -0.13),
+    roundBox(0.048, 0.074, 0.03, 0.01, -0.1, 0.285, -0.122),
+    roundBox(0.056, 0.046, 0.028, 0.011, 0.092, 0.215, -0.116)
+  ]), gear(p.vest), 'vest');
 
   const pack = meshOf(`pack|${key}`, () => mergeAll([
-    roundBox(0.235, 0.26, 0.095, 0.035, 0, 0.30, 0.155),   // main body
-    roundBox(0.20, 0.075, 0.055, 0.018, 0, 0.40, 0.145),   // top lid
-    roundBox(0.035, 0.20, 0.03, 0.01, 0.075, 0.32, 0.105), // compression strap
-    roundBox(0.035, 0.20, 0.03, 0.01, -0.075, 0.32, 0.105)
+    roundBox(pr.chestR * 1.2, 0.25, 0.092, 0.033, 0, 0.30, 0.15),
+    roundBox(pr.chestR * 1.02, 0.07, 0.052, 0.017, 0, 0.395, 0.142),
+    roundBox(0.032, 0.19, 0.028, 0.01, 0.07, 0.32, 0.102),
+    roundBox(0.032, 0.19, 0.028, 0.01, -0.07, 0.32, 0.102)
   ]), leather(p.boots), 'pack');
 
   /* ---- arms ---- */
   const shoulder = (mirror: number): THREE.Mesh => meshOf(`shoulder|${key}`, () => mergeAll([
-    ball(0.069, 0, 0, 0, [1.02, 0.95, 1.0]),
-    // Deltoid pad strapped over the joint.
-    ball(0.071, mirror * 0.009, 0.011, 0, [1.0, 0.55, 1.0])
+    ball(0.064 * pr.armR, 0, 0, 0, [1.02, 0.95, 1.0]),
+    ball(0.066 * pr.armR, mirror * 0.008, 0.01, 0, [1.0, 0.52, 1.0])
   ]), gear(p.vest), 'shoulder');
 
   const upper = (): THREE.Mesh => meshOf(`upper|${key}`, () => mergeAll([
-    cap(0.062, 0.20, 0, -0.15, 0),
-    ball(0.058, 0, -0.285, 0) // elbow
+    cap(0.062 * pr.armR, 0.20, 0, -0.15, 0),
+    ball(0.058 * pr.armR, 0, -0.285, 0)
   ]), cloth(p.shirt), 'upper');
 
-  // Sleeved forearm — identical on both arms so the operator reads as a unit.
   const fore = (): THREE.Mesh => meshOf(`fore|${key}`, () => mergeAll([
-    cap(0.055, 0.175, 0, -0.115, 0),
-    ball(0.05, 0, -0.006, 0) // elbow cuff
+    cap(0.055 * pr.armR, 0.175, 0, -0.115, 0),
+    ball(0.05 * pr.armR, 0, -0.006, 0)
   ]), cloth(p.shirt), 'fore');
 
-  // Gloved hand: palm, three fingers, thumb and a wrist strap.
   const glove = (): THREE.Mesh => meshOf(`glove|${key}`, () => mergeAll([
     roundBox(0.082, 0.092, 0.045, 0.025, 0, -0.255, 0.004),
-    capsule(0.0145, 0.045, -0.022, -0.325, 0.0, 'y', detail === 'high' ? 6 : 4, 2),
-    capsule(0.0145, 0.048, 0.012, -0.328, 0.0, 'y', detail === 'high' ? 6 : 4, 2),
-    capsule(0.013, 0.036, 0.045, -0.272, 0.012, 'y', detail === 'high' ? 6 : 4, 2),
+    cap(0.0145, 0.045, -0.022, -0.325, 0.0),
+    cap(0.0145, 0.048, 0.012, -0.328, 0.0),
+    cap(0.013, 0.036, 0.045, -0.272, 0.012),
     roundBox(0.035, 0.03, 0.03, 0.012, 0, -0.20, -0.035)
   ]), leather(p.boots), 'glove');
 
   /* ---- legs ---- */
   const thigh = (): THREE.Mesh => meshOf(`thigh|${key}`, () => mergeAll([
-    cap(0.09, 0.30, 0, -0.20, 0),
-    ball(0.075, 0, -0.40, 0) // knee
+    cap(0.09 * pr.legR, 0.30, 0, -0.20, 0),
+    ball(0.075 * pr.legR, 0, -0.40, 0)
   ]), cloth(p.pants), 'thigh');
 
-  const kneePad = meshOf(`knee|${key}`, () => mergeAll([
-    roundBox(0.115, 0.10, 0.075, 0.03, 0, 0.02, -0.05)
-  ]), gear(p.vest), 'knee');
-
   const shin = (): THREE.Mesh => meshOf(`shin|${key}`, () => mergeAll([
-    cap(0.072, 0.26, 0, -0.17, 0),
-    // boot: ankle collar, foot, sole, toe cap
-    tap(0.078, 0.072, 0.10, 0, -0.35, 0, 0.9),
+    cap(0.072 * pr.legR, 0.26, 0, -0.17, 0),
+    tap(0.078 * pr.legR, 0.072 * pr.legR, 0.10, 0, -0.35, 0, 0.9),
     roundBox(0.093, 0.072, 0.225, 0.028, 0, -0.412, -0.038),
     roundBox(0.099, 0.024, 0.235, 0.011, 0, -0.455, -0.038),
     roundBox(0.087, 0.046, 0.04, 0.018, 0, -0.42, -0.145)
   ]), leather(p.boots), 'shin');
 
   /* ---- head ---- */
-  const headParts: THREE.BufferGeometry[] = [
-    ball(0.108, 0, 0.02, 0, [0.95, 1.06, 1.02]), // cranium
-    tap(0.082, 0.055, 0.13, 0, -0.055, -0.012, 0.88),  // jaw
-    ball(0.05, 0, -0.02, 0.078),                    // occiput
-    ball(0.028, 0.098, 0.0, 0.008, [0.5, 1.1, 0.8]), // ears
-    ball(0.028, -0.098, 0.0, 0.008, [0.5, 1.1, 0.8]),
-    roundBox(0.03, 0.04, 0.03, 0.011, 0, -0.012, -0.113),  // nose
-    roundBox(0.058, 0.02, 0.02, 0.008, 0, -0.08, -0.097)   // chin
+  const head = meshOf(`head|${key}`, () => buildSkull(SEG, pr.headScale), skinMat(p.skin), 'head');
+  const { face, eyeWhite, eyeIris, brows } = buildFace(SEG);
+  const faceMesh = meshOf(`face|${key}`, () => face, decalMat(p.skin, 0.52, 0.0, 'face-hi'), 'face');
+  const eyeWhiteMesh = meshOf(`eyewhite|${key}`, () => eyeWhite, decalMat(0xece7de, 0.32, 0.0, 'sclera'), 'eyeWhite');
+  const eyeIrisMesh = meshOf(`eyeiris|${key}`, () => eyeIris, decalMat(0x2b1d16, 0.22, 0.05, 'iris'), 'eyeIris');
+  const browsMesh = meshOf(`brows|${key}`, () => brows, decalMat(p.hair, 0.86, 0.06, 'brow'), 'brows');
+
+  const hair = meshOf(`hair|${key}`, () => buildHair(hairStyle, SEG), hairMat(p.hair), 'hair');
+
+  const helmetParts: THREE.BufferGeometry[] = [
+    dome(0.129 * pr.headScale, 0, 0.034, 0.008, Math.PI * 2, [0.98, 1.0, 1.05], SEG.ball, Math.max(6, Math.round(SEG.ball * 0.6)), 0.6),
+    band(0.132 * pr.headScale, 0.118 * pr.headScale, 0.028, 0, 0.01, 0.008, 1.03, SEG.band),
+    roundBox(0.158, 0.03, 0.045, 0.013, 0, 0.04, -0.092),
+    roundBox(0.032, 0.04, 0.05, 0.011, 0, 0.086, -0.068),
+    roundBox(0.024, 0.024, 0.055, 0.009, 0.108, 0.024, 0.012),
+    roundBox(0.024, 0.024, 0.055, 0.009, -0.108, 0.024, 0.012),
+    tap(0.04, 0.04, 0.042, 0.112, -0.01, 0.0, 1),
+    tap(0.04, 0.04, 0.042, -0.112, -0.01, 0.0, 1),
+    roundBox(0.01, 0.01, 0.095, 0.004, -0.105, -0.04, -0.03)
   ];
-  const head = meshOf(`head|${key}`, () => mergeAll(headParts), skinMat(p.skin), 'head');
+  const headGear = meshOf(`headgear|${key}`, () => mergeAll(helmetParts), gear(p.helmet), 'headGear');
 
-  const faceParts: THREE.BufferGeometry[] = [
-    sphereG(0.0185, 0.042, 0.028, -0.098, 8, 7, [1, 1, 0.72]), // eyes
-    sphereG(0.0185, -0.042, 0.028, -0.098, 8, 7, [1, 1, 0.72]),
-    sphereG(0.0072, 0.042, 0.028, -0.112, 8, 6),               // pupils
-    sphereG(0.0072, -0.042, 0.028, -0.112, 8, 6),
-    roundBox(0.05, 0.011, 0.018, 0.004, 0.042, 0.056, -0.104), // brows
-    roundBox(0.05, 0.011, 0.018, 0.004, -0.042, 0.056, -0.104),
-    roundBox(0.034, 0.011, 0.014, 0.004, 0, -0.072, -0.094)    // mouth
-  ];
-  const face = meshOf(`face|${key}`, () => mergeAll(faceParts), mat(0x241d19, 0.42, 0.02, 'face'), 'face');
-
-  const gearParts: THREE.BufferGeometry[] = useHelmet
-    ? [
-        dome(0.118, 0, 0.035, 0, Math.PI * 2, [0.97, 1.0, 1.06]),    // shell
-        band(0.122, 0.108, 0.028, 0, 0.012, 0, 1.04, SEG.band),      // retention strap
-        roundBox(0.155, 0.032, 0.045, 0.014, 0, 0.042, -0.108),      // brim
-        roundBox(0.034, 0.042, 0.05, 0.012, 0, 0.088, -0.082),       // nvg mount
-        roundBox(0.024, 0.024, 0.055, 0.009, 0.098, 0.028, 0.012),   // side rail
-        roundBox(0.024, 0.024, 0.055, 0.009, -0.098, 0.028, 0.012),  // side rail
-        // headset: ear cups + boom mic
-        tap(0.038, 0.038, 0.042, 0.102, -0.008, 0.0, 1),
-        tap(0.038, 0.038, 0.042, -0.102, -0.008, 0.0, 1),
-        roundBox(0.01, 0.01, 0.095, 0.004, -0.095, -0.042, -0.042)
-      ]
-    : [
-        dome(0.113, 0, 0.032, 0.004, Math.PI * 2, [1.0, 0.84, 1.03], 14, 8), // hair
-        roundBox(0.165, 0.035, 0.135, 0.016, 0, 0.05, 0.028)         // hair volume
-      ];
-  const headGear = meshOf(`headgear|${key}`, () => mergeAll(gearParts), useHelmet ? gear(p.helmet) : mat(p.hair, 0.92, 0.02, 'hair'), 'headGear');
-
-  // Goggles sit across the eyes; only worn with the helmet.
   const visor = meshOf(`visor|${key}`, () => mergeAll([
-    roundBox(0.135, 0.04, 0.042, 0.014, 0, 0.016, -0.098),
-    roundBox(0.15, 0.018, 0.026, 0.007, 0, 0.038, -0.092),
-    roundBox(0.05, 0.022, 0.02, 0.008, 0.078, 0.006, -0.03)
+    roundBox(0.142, 0.04, 0.042, 0.014, 0, 0.016, -0.082),
+    roundBox(0.155, 0.017, 0.025, 0.007, 0, 0.038, -0.076),
+    roundBox(0.048, 0.021, 0.02, 0.008, 0.082, 0.004, -0.014)
   ]), mat(0x16212b, 0.18, 0.45, 'visor'), 'visor');
 
+  // Squad colour: a chest tab plus shoulder flashes, not a full-width bar.
   const accent = meshOf(`accent|${key}`, () => mergeAll([
-    roundBox(0.1, 0.026, 0.022, 0.009, 0.052, 0.372, -0.152),          // chest chevron
-    roundBox(0.068, 0.025, 0.018, 0.007, 0.115, 0.402, -0.082),  // shoulder tab
-    roundBox(0.068, 0.025, 0.018, 0.007, -0.115, 0.402, -0.082)
+    roundBox(0.086, 0.021, 0.018, 0.008, 0.04, 0.268, -0.134),
+    roundBox(0.062, 0.02, 0.014, 0.006, pr.shoulderX * 0.94, 0.36, 0.0),
+    roundBox(0.062, 0.02, 0.014, 0.006, -pr.shoulderX * 0.94, 0.36, 0.0)
   ]), mat(p.accent, 0.5, 0.25, 'accent'), 'accent');
 
-  const neck = meshOf(`neck|${key}`, () => mergeAll([
-    tap(0.05, 0.06, 0.135, 0, 0.425, 0.006, 0.9)
-  ]), skinMat(p.skin), 'neck');
-
   const parts: BodyParts = {
-    pelvis, torso, vest, belt, pack, neck,
+    pelvis, torso, vest, belt, pack,
     shoulderL: shoulder(1), shoulderR: shoulder(-1),
     upperL: upper(), upperR: upper(),
     foreL: fore(), foreR: fore(),
     thighL: thigh(), thighR: thigh(),
     shinL: shin(), shinR: shin(),
-    head, headGear, face, accent, visor,
-    handL: glove(), handR: glove()
+    head, face: faceMesh, eyeWhite: eyeWhiteMesh, eyeIris: eyeIrisMesh, brows: browsMesh,
+    hair, headGear, visor, accent,
+    handL: glove(), handR: glove(),
+    neck: meshOf(`neck|${key}`, () => mergeAll([tap(0.05, 0.062, 0.15, 0, 0.45, 0.006, 0.9)]), skinMat(p.skin), 'neck')
   };
-  void kneePad;
   bodyCache.set(key, parts);
   return parts;
 }
@@ -445,20 +669,24 @@ export class CharacterRig {
   private deathProgress = 0;
   private showcase = false;
   private showcasePhase = 0;
+  private hipY = HIP_Y;
 
-  constructor(paletteIndex = 0, cosmetic: { helmet?: boolean; vest?: boolean; detail?: RigDetail } = {}) {
+  constructor(paletteIndex = 0, cosmetic: { helmet?: boolean; vest?: boolean; detail?: RigDetail; variant?: BodyVariant; hair?: HairStyle } = {}) {
     this.palette = SKINS[Math.abs(paletteIndex) % SKINS.length];
     const p = this.palette;
     const useHelmet = cosmetic.helmet ?? true;
     const useVest = cosmetic.vest ?? true;
-    const body = bodyFor(p, useHelmet, useVest, cosmetic.detail ?? 'low');
+    const variant: BodyVariant = cosmetic.variant ?? 'male';
+    const hairStyle: HairStyle = cosmetic.hair ?? (variant === 'female' ? 'bob' : 'short');
+    const body = bodyFor(p, useHelmet, useVest, cosmetic.detail ?? 'low', variant, hairStyle);
+    this.hipY = PROPS[variant].hipY;
 
     /* ---------------- Hierarchy (real anatomical pivots) ---------------- */
     const root = this.root;
     root.name = 'character';
 
     const hips = new THREE.Group();
-    hips.position.y = HIP_Y;
+    hips.position.y = this.hipY;
     root.add(hips);
 
     const spine = new THREE.Group();
@@ -469,7 +697,7 @@ export class CharacterRig {
     spine.add(chest);
 
     const head = new THREE.Group();
-    head.position.y = 0.46;
+    head.position.y = 0.50;
     chest.add(head);
 
     const armL = new THREE.Group();
@@ -520,8 +748,12 @@ export class CharacterRig {
     legR.add(body.thighR);
     shinL.add(body.shinL);
     shinR.add(body.shinR);
-    head.add(body.head, body.face, body.headGear);
-    if (useHelmet) head.add(body.visor);
+    head.add(body.head, body.face, body.eyeWhite, body.eyeIris, body.brows);
+    if (useHelmet) {
+      head.add(body.headGear, body.visor);
+    } else if (body.hair) {
+      head.add(body.hair);
+    }
 
     /* ---------------- Far LOD body ---------------- */
     const simpleGeoms: THREE.BufferGeometry[] = [
@@ -613,7 +845,7 @@ export class CharacterRig {
 
   private resetPose(): void {
     const b = this.bones;
-    b.hips.position.set(0, HIP_Y, 0);
+    b.hips.position.set(0, this.hipY, 0);
     b.hips.rotation.set(0, 0, 0);
     b.spine.rotation.set(0, 0, 0);
     b.chest.rotation.set(0, 0, 0);
@@ -705,13 +937,15 @@ export class CharacterRig {
         b.legR.rotation.x = -0.03;
         b.legL.rotation.z = 0.035;
         b.legR.rotation.z = -0.035;
-        b.armL.rotation.x = 0.16;
-        b.armR.rotation.x = 0.2;
-        b.foreL.rotation.x = -0.3;
-        b.foreR.rotation.x = -0.42;
+        b.armL.rotation.x = 0.14;
+        b.armR.rotation.x = 0.17;
+        b.armL.rotation.z = 0.1;
+        b.armR.rotation.z = -0.09;
+        b.foreL.rotation.x = -0.42;
+        b.foreR.rotation.x = -0.5;
         b.head.rotation.y = sway * 1.4;
         if (state === 'CROUCH_IDLE') {
-          b.hips.position.y = HIP_Y - 0.20;
+          b.hips.position.y = this.hipY - 0.20;
           b.legL.rotation.x = -0.95;
           b.legR.rotation.x = -0.85;
           b.shinL.rotation.x = 1.55;
@@ -738,7 +972,7 @@ export class CharacterRig {
         // Knees only bend backwards and plant on contact.
         b.shinL.rotation.x = Math.max(0, -Math.cos(phase)) * swing * 1.6 + 0.1;
         b.shinR.rotation.x = Math.max(0, -Math.cos(phase + Math.PI)) * swing * 1.6 + 0.1;
-        b.hips.position.y = HIP_Y + Math.abs(Math.sin(phase)) * 0.04 * moving - 0.045 * running;
+        b.hips.position.y = this.hipY + Math.abs(Math.sin(phase)) * 0.04 * moving - 0.045 * running;
         b.hips.rotation.y = Math.sin(phase) * 0.1 * moving;
         b.hips.rotation.z = Math.sin(phase * 2) * 0.02 * moving;
         b.spine.rotation.x = lean;
@@ -756,7 +990,7 @@ export class CharacterRig {
       }
       case 'CROUCH_WALK': {
         const p2 = t * 5.0;
-        b.hips.position.y = HIP_Y - 0.20 + Math.abs(Math.sin(p2)) * 0.02;
+        b.hips.position.y = this.hipY - 0.20 + Math.abs(Math.sin(p2)) * 0.02;
         b.legL.rotation.x = -0.9 + Math.sin(p2) * 0.5;
         b.legR.rotation.x = -0.9 + Math.sin(p2 + Math.PI) * 0.5;
         b.shinL.rotation.x = 1.55 - Math.sin(p2) * 0.5;
@@ -795,7 +1029,7 @@ export class CharacterRig {
       }
       case 'LAND': {
         const k = Math.min(1, actor.landingImpact / 16);
-        b.hips.position.y = HIP_Y - 0.32 * k;
+        b.hips.position.y = this.hipY - 0.32 * k;
         b.legL.rotation.x = -0.9 * k;
         b.legR.rotation.x = -0.9 * k;
         b.legL.rotation.z = 0.12 * k;
@@ -874,7 +1108,7 @@ export class CharacterRig {
       case 'DEAD': {
         this.deathProgress = Math.min(1, this.deathProgress + dt * 2.2);
         const k = this.deathProgress;
-        b.hips.position.y = lerp(HIP_Y, 0.24, k);
+        b.hips.position.y = lerp(this.hipY, 0.24, k);
         b.hips.rotation.x = lerp(0, -1.5, k);
         b.legL.rotation.x = lerp(0, 0.3, k);
         b.legR.rotation.x = lerp(0, 0.55, k);
@@ -966,7 +1200,7 @@ export class CharacterRig {
     const sway = Math.sin(t * 0.37) * 0.035;
     this.resetPose();
 
-    b.hips.position.y = HIP_Y + breath * 0.5;
+    b.hips.position.y = this.hipY + breath * 0.5;
     b.hips.rotation.y = sway;
     b.hips.rotation.z = 0.03;
     b.spine.rotation.x = 0.03 + breath * 0.4;

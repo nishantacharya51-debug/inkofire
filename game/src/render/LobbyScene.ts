@@ -102,7 +102,7 @@ export class LobbyScene {
 
     /* ---------------- Operator ---------------- */
     // Only one character is on screen here, so the lobby uses the dense build.
-    this.rig = new CharacterRig(paletteIndex, { helmet: true, vest: true, detail: 'high' });
+    this.rig = new CharacterRig(paletteIndex, { helmet: false, vest: true, detail: 'high', variant: 'male', hair: 'spiky' });
     this.rig.setShowcase(true);
     this.rig.setWeapon(weaponId);
     this.rig.root.position.y = 0.22;

@@ -201,11 +201,11 @@ function effectivePointerEvents(): { total: number; blocked: string[] } {
  */
 function auditCharacterRig(): void {
   section('Character rig');
-  const variants: Array<{ helmet: boolean; vest: boolean }> = [
-    { helmet: true, vest: true },
-    { helmet: false, vest: true },
-    { helmet: true, vest: false },
-    { helmet: false, vest: false }
+  const variants: Array<{ helmet: boolean; vest: boolean; variant: 'male' | 'female'; hair: 'short' | 'spiky' | 'bob' | 'ponytail' }> = [
+    { helmet: true, vest: true, variant: 'male', hair: 'short' },
+    { helmet: false, vest: true, variant: 'male', hair: 'spiky' },
+    { helmet: true, vest: false, variant: 'female', hair: 'bob' },
+    { helmet: false, vest: true, variant: 'female', hair: 'ponytail' }
   ];
   let meshes = 0;
   let vertices = 0;
@@ -227,8 +227,8 @@ function auditCharacterRig(): void {
     rig.dispose();
   }
   check('every character body part has geometry', broken.length === 0, broken.slice(0, 4).join(', '));
-  check('character has a full mesh set', meshes >= 40, `${meshes} meshes across ${variants.length} variants`);
-  check('character geometry stays lightweight', vertices / variants.length < 35000, `${Math.round(vertices / variants.length)} verts per character`);
+  check('character has a full mesh set', meshes >= 60, `${meshes} meshes across ${variants.length} variants`);
+  check('character geometry stays lightweight', vertices / variants.length < 30000, `${Math.round(vertices / variants.length)} verts, ${(vertices / variants.length / 1000).toFixed(1)}k per character`);
 
   const weaponClasses = ['vk77', 'hornet9', 'breach12', 'bolt7', 'specter', 'bulwark', 'p9', 'blade'];
   const missing = weaponClasses.filter((id) => {

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Actor } from '../entity/Actor';
-import { CharacterRig, SKINS } from './CharacterRig';
+import { CharacterRig, SKINS, type BodyVariant, type HairStyle } from './CharacterRig';
 import { settings } from '../core/Settings';
 import { WEAPONS } from '../items/Items';
 
@@ -32,12 +32,23 @@ function d0(actor: Actor, p: THREE.Vector3): number {
   return actor.distanceTo(p.x, p.y, p.z);
 }
 
-function cosmeticFor(id: number): { paletteIndex: number; helmet: boolean; vest: boolean } {
-  const h = (id * 2654435761) >>> 0;
+/** Deterministic operator identity: build, palette, hair and gear per actor. */
+function cosmeticFor(actor: Actor): { paletteIndex: number; helmet: boolean; vest: boolean; variant: BodyVariant; hair: HairStyle } {
+  // The player always gets the default male operator from the character select.
+  if (actor.isLocal) {
+    return { paletteIndex: 0, helmet: false, vest: true, variant: 'male', hair: 'spiky' };
+  }
+  const h = (actor.id * 2654435761) >>> 0;
+  const variant: BodyVariant = h % 100 < 36 ? 'female' : 'male';
+  const hairPool: HairStyle[] = variant === 'female' ? ['bob', 'ponytail', 'bun', 'long'] : ['short', 'spiky', 'short'];
+  const hair = hairPool[(h >>> 7) % hairPool.length];
+  const helmet = h % 5 < 3;
   return {
-    paletteIndex: h % SKINS.length,
-    helmet: h % 3 !== 0,
-    vest: h % 2 === 0
+    paletteIndex: (h >>> 3) % SKINS.length,
+    helmet,
+    vest: h % 3 !== 0,
+    variant,
+    hair
   };
 }
 
@@ -56,8 +67,13 @@ export class ActorRenderer {
   }
 
   private createView(actor: Actor): ActorView {
-    const cos = cosmeticFor(actor.id);
-    const rig = new CharacterRig(cos.paletteIndex, { helmet: cos.helmet, vest: cos.vest });
+    const cos = cosmeticFor(actor);
+    const rig = new CharacterRig(cos.paletteIndex, {
+      helmet: cos.helmet,
+      vest: cos.vest,
+      variant: cos.variant,
+      hair: cos.hair
+    });
     this.root.add(rig.root);
     this.root.add(rig.simpleRoot);
 
