@@ -5,8 +5,15 @@ A complete, original 3D battle-royale shooter that runs entirely in the browser
 audio assets — every texture, model, sound and map is generated procedurally in
 code.
 
-**Play it:** https://nishantacharya51-debug.github.io/inkofire/
-*(the page that previously lived here is still available under `/ict/`)*
+**Play it:** https://nishantacharya51-debug.github.io/inkofire/play/
+
+*(the older "Secret ICT Call Room" page still owns the site root at
+`/inkofire/`, and is preserved at `/inkofire/play/ict/`)*
+
+> **Want the game on the plain URL?** Set
+> **Settings → Pages → Source → GitHub Actions**. The workflow then publishes the
+> game at `/inkofire/` and the previous page at `/inkofire/ict/` — no files need
+> to change and no paid plan is involved (the repository is public).
 
 ## Game modes
 
