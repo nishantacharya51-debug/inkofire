@@ -5,15 +5,21 @@ A complete, original 3D battle-royale shooter that runs entirely in the browser
 audio assets — every texture, model, sound and map is generated procedurally in
 code.
 
-**Play it:** https://nishantacharya51-debug.github.io/inkofire/play/
+**Play it:** https://nishantacharya51-debug.github.io/secretnishantfwh/play/
 
-*(the older "Secret ICT Call Room" page still owns the site root at
-`/inkofire/`, and is preserved at `/inkofire/play/ict/`)*
+*(the older "Secret ICT Call Room" page still owns the site root —
+https://nishantacharya51-debug.github.io/secretnishantfwh/ — and a copy of it
+ships with the game at `/secretnishantfwh/play/ict/`)*
 
 > **Want the game on the plain URL?** Set
-> **Settings → Pages → Source → GitHub Actions**. The workflow then publishes the
-> game at `/inkofire/` and the previous page at `/inkofire/ict/` — no files need
-> to change and no paid plan is involved (the repository is public).
+> **Settings → Pages → Source → GitHub Actions**, or just ask — the workflow can
+> publish the game at `/secretnishantfwh/` with the previous page moved to
+> `/secretnishantfwh/ict/`. No files are lost and no paid plan is involved (the
+> repository is public).
+>
+> **Renaming the repository changes the URL.** GitHub Pages URLs follow the repo
+> name, so after a rename the game moves to
+> `https://<user>.github.io/<new-repo-name>/play/`.
 
 ## Game modes
 
