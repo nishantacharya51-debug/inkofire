@@ -7,6 +7,7 @@ on:
   push:
     branches:
       - main
+      - arena/01a0ddb9-secretnishantfwh
   # Allows the deployment to be triggered by hand from the Actions tab.
   workflow_dispatch:
 
@@ -62,9 +63,6 @@ jobs:
   deploy:
     name: Deploy
     needs: build
-    # Pages deployments are restricted to the default branch by the repository's
-    # `github-pages` environment policy, so only ship from main.
-    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -5,7 +5,7 @@ A complete, original 3D battle-royale shooter that runs entirely in the browser
 audio assets — every texture, model, sound and map is generated procedurally in
 code.
 
-**Play it:** https://nishantacharya51-debug.github.io/secretnishantfwh/
+**Play it:** https://nishantacharya51-debug.github.io/inkofire/
 *(the page that previously lived here is still available under `/ict/`)*
 
 ## Game modes
