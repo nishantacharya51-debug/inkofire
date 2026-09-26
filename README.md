@@ -21,6 +21,18 @@ ships with the game at `/secretnishantfwh/play/ict/`)*
 > name, so after a rename the game moves to
 > `https://<user>.github.io/<new-repo-name>/play/`.
 
+## What the game does
+
+- **Lobby** — a lit hangar with your operator standing on a rotating dais.
+  Drag on the deck to spin the model, scroll to zoom, then board the dropship.
+- **Operator model** — generated in code from smooth anatomy (capsules, tapered
+  torsos, bevelled gear plates): helmet with visor and NVG mount, plate carrier
+  with pouches, backpack, belt kit, knee pads, gloves and boots. The rig is
+  fully procedural: walk/run/sprint cycles, crouch, prone, slide, jump/fall/
+  land, swim, skydive, parachute, downed crawl and death.
+- **Third-person by default** with over-the-shoulder offset, ADS zoom, recoil
+  kick, wall avoidance and a first-person toggle in Settings.
+
 ## Game modes
 
 | Mode | Description |

@@ -4,13 +4,19 @@ import type { Actor } from '../entity/Actor';
 import { clamp, damp, lerp } from '../utils/mathx';
 
 /**
- * Procedural humanoid character.
+ * Procedural humanoid operator.
  *
- * Built entirely from generated geometry (no external models): realistic-ish
- * proportions (~7.5 heads tall), tactical clothing layers, hands with fingers,
- * boots, and a head with facial features. Animation is procedural — walk/run/
- * sprint cycles, crouch, prone, jump/land, aim, reload, swim, skydive, chute,
- * downed and death poses — blended by a state machine driven from Actor.
+ * Everything is generated in code — no external models, no ripped assets. The
+ * body is built from smooth primitives (capsules, tapered lathes, bevelled
+ * plates) rather than boxes so it reads as a person at gameplay distance:
+ * ~1.82 m tall, ~7.6 heads, real anatomical landmarks (shoulders, elbows,
+ * waist, knees, ankles) so the procedural animation has something believable
+ * to rotate.
+ *
+ * Geometry is *shared*: every rig with the same cosmetic variant references one
+ * cached set of merged meshes, so a 60-operator match costs one build instead
+ * of sixty. Only per-actor materials differ (palette colours come from the
+ * shared material cache as well).
  */
 
 export interface CharacterPalette {
@@ -33,6 +39,10 @@ export const SKINS: CharacterPalette[] = [
   { skin: 0xf0d0b0, hair: 0xc8b070, shirt: 0x6a6a72, pants: 0x44444c, boots: 0x2c2c33, vest: 0x55555e, helmet: 0x44444d, accent: 0xf0d05a }
 ];
 
+/* ------------------------------------------------------------------ */
+/* Shared material + geometry pools                                    */
+/* ------------------------------------------------------------------ */
+
 const matCache = new Map<string, THREE.MeshStandardMaterial>();
 
 function mat(color: number, roughness = 0.75, metalness = 0.05, key = ''): THREE.MeshStandardMaterial {
@@ -45,34 +55,131 @@ function mat(color: number, roughness = 0.75, metalness = 0.05, key = ''): THREE
   return m;
 }
 
-function box(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
-  const g = new THREE.BoxGeometry(w, h, d);
-  g.translate(x, y, z);
+function cloth(color: number): THREE.MeshStandardMaterial { return mat(color, 0.88, 0.02, 'cloth'); }
+function leather(color: number): THREE.MeshStandardMaterial { return mat(color, 0.62, 0.06, 'leather'); }
+function gear(color: number): THREE.MeshStandardMaterial { return mat(color, 0.55, 0.22, 'gear'); }
+function metal(color: number): THREE.MeshStandardMaterial { return mat(color, 0.34, 0.85, 'metal'); }
+function skinMat(color: number): THREE.MeshStandardMaterial { return mat(color, 0.58, 0.0, 'skin'); }
+
+/** Geometry cache — keyed by a stable string, shared between all rigs. */
+const geomCache = new Map<string, THREE.BufferGeometry>();
+
+function shared(key: string, build: () => THREE.BufferGeometry | null): THREE.BufferGeometry {
+  let g = geomCache.get(key);
+  if (!g) {
+    g = build() ?? new THREE.BufferGeometry();
+    geomCache.set(key, g);
+  }
   return g;
 }
 
-function cyl(rTop: number, rBot: number, h: number, x: number, y: number, z: number, seg = 8, rotX = 0, rotZ = 0): THREE.BufferGeometry {
-  const g = new THREE.CylinderGeometry(rTop, rBot, h, seg);
-  if (rotX) g.rotateX(rotX);
-  if (rotZ) g.rotateZ(rotZ);
-  g.translate(x, y, z);
-  return g;
-}
-
-function sphere(r: number, x: number, y: number, z: number, wSeg = 10, hSeg = 8): THREE.BufferGeometry {
-  const g = new THREE.SphereGeometry(r, wSeg, hSeg);
-  g.translate(x, y, z);
-  return g;
-}
-
-function mergeTo(geoms: THREE.BufferGeometry[], material: THREE.Material, name: string): THREE.Mesh {
-  const merged = mergeGeometries(geoms, false);
-  for (const g of geoms) g.dispose();
-  const mesh = new THREE.Mesh(merged ?? new THREE.BufferGeometry(), material);
+function meshOf(key: string, build: () => THREE.BufferGeometry | null, material: THREE.Material, name: string): THREE.Mesh {
+  const mesh = new THREE.Mesh(shared(key, build), material);
   mesh.name = name;
   mesh.castShadow = true;
   mesh.receiveShadow = false;
   return mesh;
+}
+
+/* ------------------------------------------------------------------ */
+/* Primitive builders (all return geometry centred on the given point) */
+/* ------------------------------------------------------------------ */
+
+/** Smooth tapered cylinder — the workhorse for limbs and torsos. */
+function taper(rTop: number, rBot: number, h: number, x: number, y: number, z: number, seg = 11, squashZ = 1): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(rTop, rBot, h, seg, 1, false);
+  if (squashZ !== 1) g.scale(1, 1, squashZ);
+  g.translate(x, y, z);
+  return g;
+}
+
+/** Capsule limb segment; `axis` picks the bone direction it lies along. */
+function capsule(r: number, len: number, x: number, y: number, z: number, axis: 'y' | 'x' | 'z' = 'y', seg = 9, capSeg = 3): THREE.BufferGeometry {
+  const g = new THREE.CapsuleGeometry(r, len, capSeg, seg);
+  if (axis === 'x') g.rotateZ(Math.PI / 2);
+  else if (axis === 'z') g.rotateX(Math.PI / 2);
+  g.translate(x, y, z);
+  return g;
+}
+
+function sphereG(r: number, x: number, y: number, z: number, wSeg = 11, hSeg = 8, scale?: [number, number, number]): THREE.BufferGeometry {
+  const g = new THREE.SphereGeometry(r, wSeg, hSeg);
+  if (scale) g.scale(scale[0], scale[1], scale[2]);
+  g.translate(x, y, z);
+  return g;
+}
+
+/** Beveled box: rounded silhouette in XY plus rounded depth edges. */
+function roundBox(w: number, h: number, d: number, r: number, x: number, y: number, z: number, bevel = 0.01): THREE.BufferGeometry {
+  const radius = Math.max(0.004, Math.min(r, Math.min(w, h) / 2 - 0.004));
+  const hw = w / 2;
+  const hh = h / 2;
+  const s = new THREE.Shape();
+  s.moveTo(-hw + radius, -hh);
+  s.lineTo(hw - radius, -hh);
+  s.quadraticCurveTo(hw, -hh, hw, -hh + radius);
+  s.lineTo(hw, hh - radius);
+  s.quadraticCurveTo(hw, hh, hw - radius, hh);
+  s.lineTo(-hw + radius, hh);
+  s.quadraticCurveTo(-hw, hh, -hw, hh - radius);
+  s.lineTo(-hw, -hh + radius);
+  s.quadraticCurveTo(-hw, -hh, -hw + radius, -hh);
+  const depth = Math.max(0.004, d - bevel * 2);
+  const g = new THREE.ExtrudeGeometry(s, {
+    depth,
+    bevelEnabled: bevel > 0.001,
+    bevelThickness: bevel,
+    bevelSize: bevel,
+    bevelSegments: 1,
+    curveSegments: 3,
+    steps: 1
+  });
+  g.translate(0, 0, -depth / 2);
+  g.computeVertexNormals();
+  g.translate(x, y, z);
+  return g;
+}
+
+/** Half-sphere shell, used for helmets, hair caps and shoulders. */
+function dome(r: number, x: number, y: number, z: number, phiLength = Math.PI * 2, scale?: [number, number, number], wSeg = 12, hSeg = 7): THREE.BufferGeometry {
+  const g = new THREE.SphereGeometry(r, wSeg, hSeg, 0, phiLength, 0, Math.PI * 0.55);
+  if (scale) g.scale(scale[0], scale[1], scale[2]);
+  g.translate(x, y, z);
+  return g;
+}
+
+/** Flat ring — straps, belts, scope rings. */
+function band(rOuter: number, rInner: number, h: number, x: number, y: number, z: number, squashZ = 1, seg = 12): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(rOuter, rOuter, h, seg, 1, true);
+  const inner = new THREE.CylinderGeometry(rInner, rInner, h, seg, 1, true);
+  const merged = mergeGeometries([g, inner], false);
+  g.dispose();
+  inner.dispose();
+  const out = merged ?? new THREE.BufferGeometry();
+  if (squashZ !== 1) out.scale(1, 1, squashZ);
+  out.translate(x, y, z);
+  return out;
+}
+
+/**
+ * Merges primitives safely.
+ *
+ * ExtrudeGeometry (the bevelled plates) is non-indexed while capsules,
+ * cylinders and spheres are indexed, and `mergeGeometries` refuses mixed
+ * input — it returns null and the part silently disappears. Normalising the
+ * index state keeps every body part present in the merged mesh.
+ */
+function mergeAll(parts: THREE.BufferGeometry[]): THREE.BufferGeometry {
+  const anyIndexed = parts.some((p) => p.index !== null);
+  const anyPlain = parts.some((p) => p.index === null);
+  const list = anyIndexed && anyPlain ? parts.map((p) => (p.index ? p.toNonIndexed() : p)) : parts;
+  const merged = mergeGeometries(list, false) ?? new THREE.BufferGeometry();
+  for (const p of parts) p.dispose();
+  if (list !== parts) for (const p of list) if (!parts.includes(p)) p.dispose();
+  if (!merged.attributes.position) {
+    console.warn('[CharacterRig] geometry merge produced an empty mesh', parts.length);
+  }
+  return merged;
 }
 
 export interface RigBones {
@@ -93,6 +200,212 @@ export interface RigBones {
   chute: THREE.Group | null;
 }
 
+interface BodyParts {
+  pelvis: THREE.Mesh;
+  torso: THREE.Mesh;
+  vest: THREE.Mesh;
+  belt: THREE.Mesh;
+  pack: THREE.Mesh;
+  neck: THREE.Mesh;
+  shoulderL: THREE.Mesh;
+  shoulderR: THREE.Mesh;
+  upperL: THREE.Mesh;
+  upperR: THREE.Mesh;
+  foreL: THREE.Mesh;
+  foreR: THREE.Mesh;
+  thighL: THREE.Mesh;
+  thighR: THREE.Mesh;
+  shinL: THREE.Mesh;
+  shinR: THREE.Mesh;
+  head: THREE.Mesh;
+  headGear: THREE.Mesh;
+  face: THREE.Mesh;
+  accent: THREE.Mesh;
+}
+
+const bodyCache = new Map<string, BodyParts>();
+
+function variantKey(useHelmet: boolean, useVest: boolean): string {
+  return `${useHelmet ? 'H' : 'h'}${useVest ? 'V' : 'v'}`;
+}
+
+/**
+ * Builds (once per variant) the full set of body meshes. Meshes reference
+ * shared geometry, so clones are cheap — only the materials differ per rig.
+ */
+function bodyFor(palette: CharacterPalette, useHelmet: boolean, useVest: boolean): BodyParts {
+  const key = `${variantKey(useHelmet, useVest)}_${palette.shirt}_${palette.vest}_${palette.pants}_${palette.boots}_${palette.helmet}_${palette.skin}_${palette.hair}_${palette.accent}`;
+  const cached = bodyCache.get(key);
+  if (cached) return cached;
+
+  const p = palette;
+
+  /* ---- pelvis + belt ---- */
+  const pelvis = meshOf(`pelvis|${key}`, () => mergeAll([
+    taper(0.155, 0.135, 0.24, 0, 0.0, 0, 16, 0.72),
+    roundBox(0.30, 0.10, 0.23, 0.05, 0, -0.10, 0.005) // hip pads
+  ]), cloth(p.pants), 'pelvis');
+
+  const belt = meshOf(`belt|${key}`, () => mergeAll([
+    band(0.176, 0.16, 0.055, 0, 0.055, 0, 0.74),
+    roundBox(0.075, 0.075, 0.045, 0.018, 0.10, 0.03, -0.135),  // pouch
+    roundBox(0.075, 0.075, 0.045, 0.018, -0.10, 0.03, -0.135), // pouch
+    roundBox(0.05, 0.05, 0.03, 0.012, 0, 0.035, 0.145)         // buckle
+  ]), leather(p.boots), 'belt');
+
+  /* ---- torso ---- */
+  const torso = meshOf(`torso|${key}`, () => mergeAll([
+    taper(0.185, 0.152, 0.40, 0, 0.20, 0, 18, 0.66),   // ribcage → waist
+    taper(0.16, 0.185, 0.09, 0, 0.02, 0, 14, 0.7),     // waist join
+    sphereG(0.115, 0, 0.40, 0, 12, 8, [1.42, 0.7, 0.72]), // upper chest mass
+    roundBox(0.30, 0.05, 0.20, 0.02, 0, 0.445, 0)       // collar bone shelf
+  ]), cloth(p.shirt), 'torso');
+
+  const vestParts: THREE.BufferGeometry[] = [
+    taper(0.196, 0.176, 0.30, 0, 0.245, 0, 16, 0.72),   // carrier body
+    roundBox(0.26, 0.20, 0.055, 0.02, 0, 0.27, -0.125), // front plate
+    roundBox(0.24, 0.20, 0.05, 0.02, 0, 0.27, 0.115),   // back plate
+    roundBox(0.10, 0.07, 0.035, 0.014, 0.10, 0.36, -0.145), // mag pouch
+    roundBox(0.10, 0.07, 0.035, 0.014, -0.02, 0.36, -0.145),
+    roundBox(0.07, 0.10, 0.04, 0.014, -0.125, 0.33, -0.14), // radio
+    roundBox(0.16, 0.022, 0.02, 0.008, 0, 0.185, -0.155),   // molle row
+    roundBox(0.16, 0.022, 0.02, 0.008, 0, 0.225, -0.155),
+    roundBox(0.05, 0.16, 0.03, 0.012, 0.145, 0.33, -0.10),
+    roundBox(0.05, 0.16, 0.03, 0.012, -0.145, 0.33, -0.10)
+  ];
+  const vest = meshOf(`vest|${key}`, () => mergeAll(vestParts), gear(p.vest), 'vest');
+
+  const pack = meshOf(`pack|${key}`, () => mergeAll([
+    roundBox(0.28, 0.34, 0.15, 0.045, 0, 0.26, 0.20),
+    roundBox(0.22, 0.09, 0.06, 0.02, 0, 0.14, 0.30),
+    roundBox(0.045, 0.30, 0.035, 0.012, 0.10, 0.28, 0.09),
+    roundBox(0.045, 0.30, 0.035, 0.012, -0.10, 0.28, 0.09)
+  ]), leather(p.boots), 'pack');
+
+  /* ---- arms ---- */
+  const shoulder = (mirror: number): THREE.Mesh => meshOf(`shoulder|${key}`, () => mergeAll([
+    sphereG(0.083, 0, 0, 0, 12, 9, [1.05, 0.95, 1.0]),
+    // Deltoid pad strapped over the joint.
+    sphereG(0.092, mirror * 0.012, 0.012, 0, 12, 9, [1.02, 0.68, 1.06])
+  ]), gear(p.vest), 'shoulder');
+
+  const upper = (): THREE.Mesh => meshOf(`upper|${key}`, () => mergeAll([
+    capsule(0.062, 0.20, 0, -0.15, 0),
+    sphereG(0.058, 0, -0.285, 0, 10, 8) // elbow
+  ]), cloth(p.shirt), 'upper');
+
+  const fore = (mirror: number): THREE.Mesh => meshOf(`fore|${key}`, () => mergeAll([
+    capsule(0.055, 0.175, 0, -0.115, 0),
+    // glove: palm, fingers, thumb
+    roundBox(0.085, 0.095, 0.045, 0.026, 0, -0.255, 0.004),
+    capsule(0.0145, 0.045, -0.026, -0.325, 0.0, 'y', 6, 2),
+    capsule(0.0145, 0.048, 0.0, -0.328, 0.0, 'y', 6, 2),
+    capsule(0.013, 0.036, mirror * 0.048, -0.272, 0.012, 'y', 6, 2)
+  ]), mirror > 0 ? cloth(p.shirt) : skinMat(p.skin), 'fore');
+
+  const gloveL = meshOf(`gloveL|${key}`, () => mergeAll([
+    roundBox(0.085, 0.095, 0.045, 0.026, 0, -0.255, 0.004),
+    capsule(0.0145, 0.045, -0.026, -0.325, 0.0, 'y', 6, 2),
+    capsule(0.0145, 0.048, 0.0, -0.328, 0.0, 'y', 6, 2),
+    capsule(0.013, 0.036, 0.048, -0.272, 0.012, 'y', 6, 2)
+  ]), leather(p.boots), 'gloveL');
+
+  /* ---- legs ---- */
+  const thigh = (): THREE.Mesh => meshOf(`thigh|${key}`, () => mergeAll([
+    capsule(0.09, 0.30, 0, -0.20, 0),
+    sphereG(0.075, 0, -0.40, 0, 10, 8) // knee
+  ]), cloth(p.pants), 'thigh');
+
+  const kneePad = meshOf(`knee|${key}`, () => mergeAll([
+    roundBox(0.115, 0.10, 0.075, 0.03, 0, 0.02, -0.05)
+  ]), gear(p.vest), 'knee');
+
+  const shin = (): THREE.Mesh => meshOf(`shin|${key}`, () => mergeAll([
+    capsule(0.072, 0.26, 0, -0.17, 0),
+    // boot: ankle collar, foot, sole, toe cap
+    taper(0.078, 0.072, 0.10, 0, -0.35, 0, 12, 0.9),
+    roundBox(0.10, 0.075, 0.255, 0.03, 0, -0.415, -0.045),
+    roundBox(0.108, 0.026, 0.27, 0.012, 0, -0.462, -0.045),
+    roundBox(0.095, 0.05, 0.045, 0.02, 0, -0.425, -0.165)
+  ]), leather(p.boots), 'shin');
+
+  /* ---- head ---- */
+  const headParts: THREE.BufferGeometry[] = [
+    sphereG(0.108, 0, 0.02, 0, 14, 10, [0.95, 1.06, 1.02]), // cranium
+    taper(0.082, 0.055, 0.13, 0, -0.055, -0.012, 12, 0.88),  // jaw
+    sphereG(0.05, 0, -0.02, 0.078, 10, 8),                    // occiput
+    sphereG(0.028, 0.098, 0.0, 0.008, 8, 6, [0.5, 1.1, 0.8]), // ears
+    sphereG(0.028, -0.098, 0.0, 0.008, 8, 6, [0.5, 1.1, 0.8]),
+    roundBox(0.032, 0.042, 0.028, 0.012, 0, -0.012, -0.108),  // nose
+    roundBox(0.06, 0.022, 0.02, 0.008, 0, -0.078, -0.092)     // chin
+  ];
+  const head = meshOf(`head|${key}`, () => mergeAll(headParts), skinMat(p.skin), 'head');
+
+  const faceParts: THREE.BufferGeometry[] = [
+    sphereG(0.019, 0.042, 0.028, -0.094, 8, 7, [1, 1, 0.75]),  // eyes
+    sphereG(0.019, -0.042, 0.028, -0.094, 8, 7, [1, 1, 0.75]),
+    sphereG(0.0075, 0.042, 0.028, -0.106, 8, 6),               // pupils
+    sphereG(0.0075, -0.042, 0.028, -0.106, 8, 6),
+    roundBox(0.052, 0.012, 0.018, 0.004, 0.042, 0.058, -0.098), // brows
+    roundBox(0.052, 0.012, 0.018, 0.004, -0.042, 0.058, -0.098),
+    roundBox(0.036, 0.012, 0.014, 0.004, 0, -0.07, -0.086)      // mouth
+  ];
+  const face = meshOf(`face|${key}`, () => mergeAll(faceParts), mat(0x241d19, 0.42, 0.02, 'face'), 'face');
+
+  const gearParts: THREE.BufferGeometry[] = useHelmet
+    ? [
+        dome(0.125, 0, 0.045, 0, Math.PI * 2, [0.96, 1.02, 1.04]),   // shell
+        roundBox(0.20, 0.045, 0.05, 0.018, 0, 0.038, -0.115),        // brim
+        roundBox(0.042, 0.05, 0.06, 0.014, 0, 0.095, -0.09),         // nvg mount
+        roundBox(0.028, 0.028, 0.03, 0.01, 0.11, 0.045, 0),          // side rail
+        roundBox(0.028, 0.028, 0.03, 0.01, -0.11, 0.045, 0),         // side rail
+        roundBox(0.26, 0.05, 0.30, 0.02, 0, -0.005, 0.02),           // helmet band
+        // headset: ear cups + boom mic
+        taper(0.042, 0.042, 0.045, 0.105, -0.005, 0.0, 10, 1),
+        taper(0.042, 0.042, 0.045, -0.105, -0.005, 0.0, 10, 1),
+        roundBox(0.012, 0.012, 0.11, 0.005, -0.10, -0.045, -0.05)
+      ]
+    : [
+        dome(0.113, 0, 0.035, 0.004, Math.PI * 2, [1.0, 0.86, 1.03], 14, 8), // hair
+        roundBox(0.20, 0.05, 0.16, 0.02, 0, 0.055, 0.03)              // hair volume
+      ];
+  const headGear = meshOf(`headgear|${key}`, () => mergeAll(gearParts), useHelmet ? gear(p.helmet) : mat(p.hair, 0.92, 0.02, 'hair'), 'headGear');
+
+  const visor = meshOf(`visor|${key}`, () => mergeAll([
+    roundBox(0.165, 0.048, 0.05, 0.018, 0, 0.022, -0.108),
+    roundBox(0.185, 0.02, 0.03, 0.008, 0, 0.05, -0.10)
+  ]), mat(0x16212b, 0.18, 0.45, 'visor'), 'visor');
+
+  const accent = meshOf(`accent|${key}`, () => mergeAll([
+    roundBox(0.29, 0.032, 0.215, 0.012, 0, 0.36, 0),          // chest chevron
+    roundBox(0.085, 0.032, 0.02, 0.008, 0.126, 0.42, -0.10),  // shoulder tab
+    roundBox(0.085, 0.032, 0.02, 0.008, -0.126, 0.42, -0.10)
+  ]), mat(p.accent, 0.5, 0.25, 'accent'), 'accent');
+
+  const neck = meshOf(`neck|${key}`, () => mergeAll([
+    taper(0.052, 0.062, 0.11, 0, 0.42, 0.006, 12, 0.9)
+  ]), skinMat(p.skin), 'neck');
+
+  const parts: BodyParts = {
+    pelvis, torso, vest, belt, pack, neck,
+    shoulderL: shoulder(1), shoulderR: shoulder(-1),
+    upperL: upper(), upperR: upper(),
+    foreL: fore(1), foreR: fore(-1),
+    thighL: thigh(), thighR: thigh(),
+    shinL: shin(), shinR: shin(),
+    head, headGear, face, accent
+  };
+  void gloveL;
+  void kneePad;
+  void visor;
+  bodyCache.set(key, parts);
+  return parts;
+}
+
+/* ------------------------------------------------------------------ */
+/* Rig                                                                 */
+/* ------------------------------------------------------------------ */
+
 export class CharacterRig {
   readonly root = new THREE.Group();
   readonly bones: RigBones;
@@ -111,18 +424,22 @@ export class CharacterRig {
   private lastShot = -99;
   private palette: CharacterPalette;
   private lodLevel = 0;
-  /** Hit-reaction impulse, decays quickly (see `flinch`). */
   private flinchTimer = 0;
+  private deathProgress = 0;
+  private showcase = false;
+  private showcasePhase = 0;
 
   constructor(paletteIndex = 0, cosmetic: { helmet?: boolean; vest?: boolean } = {}) {
-    this.palette = SKINS[paletteIndex % SKINS.length];
+    this.palette = SKINS[Math.abs(paletteIndex) % SKINS.length];
     const p = this.palette;
     const useHelmet = cosmetic.helmet ?? true;
     const useVest = cosmetic.vest ?? true;
+    const body = bodyFor(p, useHelmet, useVest);
 
-    /* ---------------- Hierarchy ---------------- */
+    /* ---------------- Hierarchy (real anatomical pivots) ---------------- */
     const root = this.root;
     root.name = 'character';
+
     const hips = new THREE.Group();
     hips.position.y = 0.94;
     root.add(hips);
@@ -139,10 +456,10 @@ export class CharacterRig {
     chest.add(head);
 
     const armL = new THREE.Group();
-    armL.position.set(0.235, 0.32, 0);
+    armL.position.set(0.215, 0.375, 0);
     chest.add(armL);
     const armR = new THREE.Group();
-    armR.position.set(-0.235, 0.32, 0);
+    armR.position.set(-0.215, 0.375, 0);
     chest.add(armR);
 
     const foreL = new THREE.Group();
@@ -153,166 +470,75 @@ export class CharacterRig {
     armR.add(foreR);
 
     const legL = new THREE.Group();
-    legL.position.set(0.105, -0.02, 0);
+    legL.position.set(0.098, -0.045, 0);
     hips.add(legL);
     const legR = new THREE.Group();
-    legR.position.set(-0.105, -0.02, 0);
+    legR.position.set(-0.098, -0.045, 0);
     hips.add(legR);
 
     const shinL = new THREE.Group();
-    shinL.position.y = -0.44;
+    shinL.position.y = -0.415;
     legL.add(shinL);
     const shinR = new THREE.Group();
-    shinR.position.y = -0.44;
+    shinR.position.y = -0.415;
     legR.add(shinR);
 
     const weaponAnchor = new THREE.Group();
-    weaponAnchor.position.set(0, -0.32, -0.12);
+    weaponAnchor.position.set(0, -0.30, -0.10);
     foreR.add(weaponAnchor);
 
     this.bones = { root, hips, spine, chest, head, armL, armR, foreL, foreR, legL, legR, shinL, shinR, weaponAnchor, chute: null };
 
-    /* ---------------- Body parts ---------------- */
-    // Hips / pelvis
-    const pelvis = mergeTo([
-      box(0.30, 0.20, 0.20, 0, 0.02, 0),
-      box(0.32, 0.10, 0.22, 0, -0.08, 0)
-    ], mat(p.pants, 0.85), 'pelvis');
-    hips.add(pelvis);
+    /* ---------------- Assembly ---------------- */
+    hips.add(body.pelvis, body.belt);
+    chest.add(body.torso, body.vest, body.pack, body.accent, body.neck);
+    armL.add(body.shoulderL, body.upperL);
+    armR.add(body.shoulderR, body.upperR);
+    foreL.add(body.foreL);
+    foreR.add(body.foreR);
+    legL.add(body.thighL);
+    legR.add(body.thighR);
+    shinL.add(body.shinL);
+    shinR.add(body.shinR);
+    head.add(body.head, body.face, body.headGear);
 
-    // Torso: shirt + chest volume + plate carrier
-    const torsoGeoms: THREE.BufferGeometry[] = [
-      box(0.36, 0.34, 0.22, 0, 0.20, 0),
-      box(0.34, 0.16, 0.21, 0, 0.40, 0),
-      box(0.30, 0.10, 0.20, 0, 0.02, 0)
-    ];
-    if (useVest) {
-      torsoGeoms.push(box(0.40, 0.30, 0.26, 0, 0.22, 0)); // plate carrier
-      torsoGeoms.push(box(0.12, 0.12, 0.05, 0.14, 0.34, -0.14)); // pouch
-      torsoGeoms.push(box(0.12, 0.12, 0.05, -0.14, 0.30, -0.14));
-    }
-    const torso = mergeTo(torsoGeoms, mat(useVest ? p.vest : p.shirt, 0.82), 'torso');
-    chest.add(torso);
-
-    // Shoulders
-    const shoulderL = mergeTo([sphere(0.105, 0, 0, 0, 8, 6)], mat(p.shirt, 0.85), 'shoulderL');
-    armL.add(shoulderL);
-    const shoulderR = mergeTo([sphere(0.105, 0, 0, 0, 8, 6)], mat(p.shirt, 0.85), 'shoulderR');
-    armR.add(shoulderR);
-
-    // Upper arms
-    const upperL = mergeTo([cyl(0.075, 0.065, 0.30, 0, -0.15, 0, 8)], mat(p.shirt, 0.82), 'upperL');
-    armL.add(upperL);
-    const upperR = mergeTo([cyl(0.075, 0.065, 0.30, 0, -0.15, 0, 8)], mat(p.shirt, 0.82), 'upperR');
-    armR.add(upperR);
-
-    // Forearms + hands with fingers
-    const handGeoms = (side: number): THREE.BufferGeometry[] => {
-      const g: THREE.BufferGeometry[] = [
-        cyl(0.062, 0.055, 0.26, 0, -0.13, 0, 8), // forearm
-        box(0.075, 0.10, 0.045, 0, -0.29, 0) // palm
-      ];
-      // four fingers + thumb
-      for (let f = 0; f < 4; f++) {
-        const off = -0.027 + f * 0.018;
-        g.push(box(0.016, 0.055, 0.028, off, -0.355, 0));
-      }
-      g.push(box(0.02, 0.045, 0.03, side * 0.045, -0.30, 0.005));
-      return g;
-    };
-    foreL.add(mergeTo(handGeoms(1), mat(p.skin, 0.72), 'forearmL'));
-    foreR.add(mergeTo(handGeoms(-1), mat(p.skin, 0.72), 'forearmR'));
-
-    // Legs
-    const thighL = mergeTo([cyl(0.095, 0.082, 0.42, 0, -0.21, 0, 8)], mat(p.pants, 0.85), 'thighL');
-    legL.add(thighL);
-    const thighR = mergeTo([cyl(0.095, 0.082, 0.42, 0, -0.21, 0, 8)], mat(p.pants, 0.85), 'thighR');
-    legR.add(thighR);
-
-    const shinGeoms: THREE.BufferGeometry[] = [
-      cyl(0.075, 0.06, 0.42, 0, -0.21, 0, 8),
-      box(0.11, 0.09, 0.24, 0, -0.44, -0.04) // boot
-    ];
-    shinL.add(mergeTo(shinGeoms.map((g) => g), mat(p.boots, 0.7, 0.08), 'shinL'));
-    shinR.add(mergeTo([cyl(0.075, 0.06, 0.42, 0, -0.21, 0, 8), box(0.11, 0.09, 0.24, 0, -0.44, -0.04)], mat(p.boots, 0.7, 0.08), 'shinR'));
-
-    // Head: skull, jaw, nose, eyes, brows, ears, hair/helmet
-    const headGeoms: THREE.BufferGeometry[] = [
-      sphere(0.115, 0, 0.02, 0, 12, 10),
-      box(0.16, 0.10, 0.17, 0, -0.045, 0),   // jaw
-      box(0.035, 0.045, 0.03, 0, -0.005, -0.11) // nose
-    ];
-    const headMesh = mergeTo(headGeoms, mat(p.skin, 0.68), 'head');
-    head.add(headMesh);
-
-    const faceGeoms: THREE.BufferGeometry[] = [
-      sphere(0.019, 0.045, 0.035, -0.098, 7, 6),  // eye
-      sphere(0.019, -0.045, 0.035, -0.098, 7, 6),
-      box(0.05, 0.012, 0.02, 0.045, 0.062, -0.10), // brow
-      box(0.05, 0.012, 0.02, -0.045, 0.062, -0.10),
-      box(0.03, 0.02, 0.02, 0, -0.055, -0.098)     // mouth line
-    ];
-    head.add(mergeTo(faceGeoms, mat(0x1a1614, 0.5), 'face'));
-
-    if (useHelmet) {
-      const helmet = mergeTo([
-        sphere(0.135, 0, 0.03, 0, 12, 10),
-        box(0.22, 0.06, 0.20, 0, 0.02, 0.02)
-      ], mat(p.helmet, 0.55, 0.15), 'helmet');
-      helmet.scale.set(1, 0.92, 1.06);
-      head.add(helmet);
-      const goggles = mergeTo([box(0.17, 0.05, 0.05, 0, 0.03, -0.10)], mat(0x1e2a33, 0.25, 0.4), 'goggles');
-      head.add(goggles);
-    } else {
-      const hair = mergeTo([sphere(0.122, 0, 0.035, 0.006, 12, 8)], mat(p.hair, 0.9), 'hair');
-      hair.scale.set(1, 0.85, 1.02);
-      head.add(hair);
-    }
-    const ears = mergeTo([sphere(0.028, 0.115, 0.01, 0.01, 6, 5), sphere(0.028, -0.115, 0.01, 0.01, 6, 5)], mat(p.skin, 0.7), 'ears');
-    head.add(ears);
-    // Neck
-    chest.add(mergeTo([cyl(0.055, 0.06, 0.10, 0, 0.42, 0, 8)], mat(p.skin, 0.7), 'neck'));
-
-    /* ---------------- Simplified LOD body ---------------- */
+    /* ---------------- Far LOD body ---------------- */
     const simpleGeoms: THREE.BufferGeometry[] = [
-      box(0.34, 0.34, 0.22, 0, 1.24, 0),
-      box(0.30, 0.20, 0.20, 0, 0.96, 0),
-      cyl(0.075, 0.065, 0.30, 0.22, 1.24, 0, 6),
-      cyl(0.075, 0.065, 0.30, -0.22, 1.24, 0, 6),
-      cyl(0.09, 0.08, 0.44, 0.105, 0.68, 0, 6),
-      cyl(0.09, 0.08, 0.44, -0.105, 0.68, 0, 6),
-      box(0.11, 0.09, 0.2, 0.105, 0.24, -0.03),
-      box(0.11, 0.09, 0.2, -0.105, 0.24, -0.03)
+      taper(0.19, 0.15, 0.46, 0, 1.24, 0, 8, 0.7),
+      taper(0.155, 0.135, 0.24, 0, 0.94, 0, 8, 0.72),
+      capsule(0.07, 0.24, 0.215, 1.32, 0, 'y', 7, 3),
+      capsule(0.07, 0.24, -0.215, 1.32, 0, 'y', 7, 3),
+      capsule(0.09, 0.34, 0.10, 0.70, 0, 'y', 7, 3),
+      capsule(0.09, 0.34, -0.10, 0.70, 0, 'y', 7, 3),
+      capsule(0.075, 0.30, 0.10, 0.30, 0, 'y', 7, 3),
+      capsule(0.075, 0.30, -0.10, 0.30, 0, 'y', 7, 3),
+      roundBox(0.11, 0.08, 0.24, 0.03, 0.10, 0.055, -0.04),
+      roundBox(0.11, 0.08, 0.24, 0.03, -0.10, 0.055, -0.04)
     ];
-    const simpleBodyGeom = mergeGeometries(simpleGeoms, false);
-    for (const g of simpleGeoms) g.dispose();
-    this.simpleBody = new THREE.Mesh(simpleBodyGeom ?? new THREE.BufferGeometry(), mat(useVest ? p.vest : p.shirt, 0.82));
+    this.simpleBody = new THREE.Mesh(shared(`simpleBody|${variantKey(useHelmet, useVest)}`, () => mergeAll(simpleGeoms)), cloth(useVest ? p.vest : p.shirt));
     this.simpleBody.castShadow = true;
     this.simpleRoot.add(this.simpleBody);
-    const simpleHeadGeom = mergeGeometries([sphere(0.12, 0, 1.63, 0, 8, 6)], false);
-    this.simpleHead = new THREE.Mesh(simpleHeadGeom ?? new THREE.BufferGeometry(), mat(useHelmet ? p.helmet : p.skin, 0.6));
+    this.simpleHead = new THREE.Mesh(
+      shared(`simpleHead|${variantKey(useHelmet, useVest)}`, () => mergeAll([sphereG(0.11, 0, 1.68, 0, 10, 8, [0.95, 1.08, 1.02])])),
+      useHelmet ? gear(p.helmet) : skinMat(p.skin)
+    );
     this.simpleHead.castShadow = true;
     this.simpleRoot.add(this.simpleHead);
     this.simpleRoot.visible = false;
-
-    // Team/identification band (original "squad marker" design)
-    const band = mergeTo([box(0.42, 0.045, 0.24, 0, 1.34, 0)], mat(p.accent, 0.6, 0.3), 'band');
-    chest.add(band);
   }
 
-  /** Swaps the held weapon model. */
+  /** Swaps the held weapon model (geometry is shared per weapon id). */
   setWeapon(weaponId: string | null, scale = 1): void {
     if (weaponId === this.weaponId) return;
     this.weaponId = weaponId ?? '';
     if (this.weaponMesh) {
       this.bones.weaponAnchor.remove(this.weaponMesh);
-      this.weaponMesh.geometry.dispose();
       this.weaponMesh = null;
     }
     if (!weaponId) return;
-    const geo = buildWeaponGeometry(weaponId);
-    if (!geo) return;
-    const m = new THREE.Mesh(geo, mat(0x2e3238, 0.5, 0.55));
+    const geo = shared(`weapon|${weaponId}`, () => buildWeaponGeometry(weaponId));
+    if (!geo.attributes.position) return;
+    const m = new THREE.Mesh(geo, metal(0x33383f));
     m.castShadow = true;
     m.scale.setScalar(scale);
     this.bones.weaponAnchor.add(m);
@@ -322,27 +548,25 @@ export class CharacterRig {
   /** Deploys or hides the parachute canopy. */
   setParachute(visible: boolean): void {
     if (visible && !this.parachute) {
-      const canopyGeom = mergeGeometries([
-        new THREE.SphereGeometry(1.7, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5),
-        box(0.06, 1.4, 0.06, 0.7, -0.7, 0),
-        box(0.06, 1.4, 0.06, -0.7, -0.7, 0),
-        box(0.06, 1.4, 0.06, 0, -0.7, 0.7),
-        box(0.06, 1.4, 0.06, 0, -0.7, -0.7)
-      ], false);
-      const m = new THREE.Mesh(canopyGeom ?? new THREE.BufferGeometry(), mat(this.palette.accent, 0.95, 0));
-      m.position.y = 2.15;
-      m.scale.set(1, 0.62, 1);
+      const geo = shared('chute', () => mergeAll([
+        new THREE.SphereGeometry(1.65, 16, 9, 0, Math.PI * 2, 0, Math.PI * 0.5),
+        taper(0.02, 0.02, 1.3, 0.62, -0.65, 0, 6),
+        taper(0.02, 0.02, 1.3, -0.62, -0.65, 0, 6),
+        taper(0.02, 0.02, 1.3, 0, -0.65, 0.62, 6),
+        taper(0.02, 0.02, 1.3, 0, -0.65, -0.62, 6)
+      ]));
+      const m = new THREE.Mesh(geo, cloth(this.palette.accent));
+      m.position.y = 2.05;
+      m.scale.set(1, 0.6, 1);
       m.castShadow = true;
       this.root.add(m);
       this.parachute = m;
     } else if (!visible && this.parachute) {
       this.root.remove(this.parachute);
-      this.parachute.geometry.dispose();
       this.parachute = null;
     }
   }
 
-  /** Chooses full or simplified representation based on camera distance. */
   /** Small torso/head jolt when the character takes a hit. */
   flinch(strength = 1): void {
     this.flinchTimer = Math.min(0.4, 0.22 + strength * 0.08);
@@ -356,36 +580,18 @@ export class CharacterRig {
   }
 
   /**
-   * Poses the rig for the current actor state.
-   * `dt` is the frame delta, `aimYaw`/`aimPitch` the desired upper-body aim.
+   * Lobby / showcase stance: weapon carried across the chest, weight on one
+   * leg, slow breathing. Used behind the main menu and the pre-match lobby.
    */
-  update(actor: Actor, dt: number, aimPitch = 0): void {
-    this.animTime += dt;
-    const speed = actor.speed;
-    const state = actor.moveState;
-    const t = this.animTime;
+  setShowcase(on: boolean): void {
+    this.showcase = on;
+    if (!on) this.showcasePhase = 0;
+  }
+
+  /* ---------------- Pose helpers ---------------- */
+
+  private resetPose(): void {
     const b = this.bones;
-
-    // Blend helpers
-    const running = clamp((speed - 3.6) / 3.6, 0, 1);
-    const moving = clamp(speed / 4.0, 0, 1);
-    const cycle = state === 'SPRINT' ? 11.5 : state === 'RUN' ? 8.6 : state === 'CROUCH_WALK' ? 5.2 : 6.4;
-    const phase = t * cycle;
-
-    this.aimBlend = damp(this.aimBlend, actor.adsProgress > 0.4 || actor.isLocal ? actor.adsProgress : 0.35 * clamp(speed / 4, 0, 1), 8, dt);
-
-    // Weapon switching / reload animation state
-    if (actor.reloadTimer > 0) this.reloadBlend = Math.min(1, this.reloadBlend + dt * 4);
-    else this.reloadBlend = Math.max(0, this.reloadBlend - dt * 4);
-
-    if (actor.lastShotTime > this.lastShot) {
-      this.fireKick = 1;
-      this.lastShot = actor.lastShotTime;
-    }
-    this.fireKick = Math.max(0, this.fireKick - dt * 9);
-    if (this.flinchTimer > 0) this.flinchTimer = Math.max(0, this.flinchTimer - dt);
-
-    // Reset base pose each frame
     b.hips.position.set(0, 0.94, 0);
     b.hips.rotation.set(0, 0, 0);
     b.spine.rotation.set(0, 0, 0);
@@ -399,34 +605,103 @@ export class CharacterRig {
     b.legR.rotation.set(0, 0, 0);
     b.shinL.rotation.set(0, 0, 0);
     b.shinR.rotation.set(0, 0, 0);
+  }
 
-    const lean = state === 'SPRINT' ? 0.22 : state === 'RUN' ? 0.14 : 0;
+  /**
+   * Two-handed weapon carry: right hand on the grip, left hand under the
+   * handguard. `amount` blends with the one-handed/idle pose.
+   */
+  private holdWeapon(amount: number, ads: number): void {
+    if (amount <= 0.001) return;
+    const b = this.bones;
+    const a = amount;
+    // Right arm pulls the weapon up into the shoulder pocket.
+    b.armR.rotation.x = lerp(b.armR.rotation.x, -0.75 - ads * 0.12, a);
+    b.armR.rotation.z = lerp(b.armR.rotation.z, -0.22 + ads * 0.16, a);
+    b.armR.rotation.y = lerp(b.armR.rotation.y, 0.18, a);
+    b.foreR.rotation.x = lerp(b.foreR.rotation.x, -0.95 - ads * 0.25, a);
+    // Left arm crosses to the foregrip.
+    const support = 0.95 - ads * 0.35;
+    b.armL.rotation.x = lerp(b.armL.rotation.x, -0.95 - ads * 0.12, a);
+    b.armL.rotation.y = lerp(b.armL.rotation.y, support, a);
+    b.armL.rotation.z = lerp(b.armL.rotation.z, 0.62 - ads * 0.30, a);
+    b.foreL.rotation.x = lerp(b.foreL.rotation.x, -0.55 - ads * 0.3, a);
+    b.foreL.rotation.y = lerp(b.foreL.rotation.y, -0.35, a);
+  }
+
+  /**
+   * Poses the rig for the current actor state.
+   * `dt` is the frame delta, `aimPitch` the desired upper-body aim.
+   */
+  update(actor: Actor, dt: number, aimPitch = 0): void {
+    this.animTime += dt;
+    const speed = actor.speed;
+    const state = actor.moveState;
+    const t = this.animTime;
+    const b = this.bones;
+
+    if (this.showcase) {
+      this.updateShowcase(dt);
+      return;
+    }
+
+    const running = clamp((speed - 3.6) / 3.6, 0, 1);
+    const moving = clamp(speed / 4.0, 0, 1);
+    const cycle = state === 'SPRINT' ? 11.2 : state === 'RUN' ? 8.4 : state === 'CROUCH_WALK' ? 5.2 : 6.2;
+    const phase = t * cycle;
+
+    const armed = this.weaponId !== '';
+    const ads = clamp(actor.adsProgress, 0, 1);
+    const targetAim = armed ? (actor.isLocal ? Math.max(0.55, ads) : ads > 0.4 ? ads : 0.45 + 0.35 * moving) : 0;
+    this.aimBlend = damp(this.aimBlend, targetAim, 9, dt);
+
+    if (actor.reloadTimer > 0) this.reloadBlend = Math.min(1, this.reloadBlend + dt * 4);
+    else this.reloadBlend = Math.max(0, this.reloadBlend - dt * 4);
+
+    if (actor.lastShotTime > this.lastShot) {
+      this.fireKick = 1;
+      this.lastShot = actor.lastShotTime;
+    }
+    this.fireKick = Math.max(0, this.fireKick - dt * 9);
+    if (this.flinchTimer > 0) this.flinchTimer = Math.max(0, this.flinchTimer - dt);
+
+    this.resetPose();
+    const lean = state === 'SPRINT' ? 0.24 : state === 'RUN' ? 0.15 : 0;
 
     switch (state) {
       case 'IDLE':
       case 'CROUCH_IDLE':
       case 'RELOAD':
       case 'HEAL': {
-        this.breathPhase += dt * 1.6;
+        // Breathing + micro weight shifts keep the idle from looking frozen.
+        this.breathPhase += dt * 1.5;
         const breath = Math.sin(this.breathPhase) * 0.012;
+        const sway = Math.sin(this.breathPhase * 0.43) * 0.02;
         b.chest.rotation.x = -0.02 + breath;
+        b.chest.rotation.y = sway;
+        b.hips.rotation.y = -sway * 0.5;
+        b.legL.rotation.x = 0.03;
+        b.legR.rotation.x = -0.03;
+        b.legL.rotation.z = 0.035;
+        b.legR.rotation.z = -0.035;
         b.armL.rotation.x = 0.16;
         b.armR.rotation.x = 0.2;
-        b.foreL.rotation.x = -0.25;
-        b.foreR.rotation.x = -0.35;
-        b.legL.rotation.x = 0.02;
-        b.legR.rotation.x = -0.02;
+        b.foreL.rotation.x = -0.3;
+        b.foreR.rotation.x = -0.42;
+        b.head.rotation.y = sway * 1.4;
         if (state === 'CROUCH_IDLE') {
-          b.hips.position.y = 0.72;
-          b.legL.rotation.x = -0.9;
-          b.legR.rotation.x = -0.9;
-          b.shinL.rotation.x = 1.5;
-          b.shinR.rotation.x = 1.5;
-          b.spine.rotation.x = 0.24;
+          b.hips.position.y = 0.74;
+          b.legL.rotation.x = -0.95;
+          b.legR.rotation.x = -0.85;
+          b.shinL.rotation.x = 1.55;
+          b.shinR.rotation.x = 1.45;
+          b.legL.rotation.z = 0.10;
+          b.legR.rotation.z = -0.10;
+          b.spine.rotation.x = 0.26;
         }
         if (state === 'HEAL') {
-          b.armL.rotation.x = 0.9;
-          b.foreL.rotation.x = -1.5;
+          b.armL.rotation.x = 0.95;
+          b.foreL.rotation.x = -1.6;
           b.armR.rotation.x = 0.7;
         }
         break;
@@ -434,90 +709,87 @@ export class CharacterRig {
       case 'WALK':
       case 'RUN':
       case 'SPRINT': {
-        const swing = state === 'SPRINT' ? 0.95 : state === 'RUN' ? 0.72 : 0.45;
+        const swing = state === 'SPRINT' ? 1.0 : state === 'RUN' ? 0.78 : 0.48;
         const legSwing = Math.sin(phase) * swing;
         const legSwing2 = Math.sin(phase + Math.PI) * swing;
         b.legL.rotation.x = legSwing;
         b.legR.rotation.x = legSwing2;
-        b.shinL.rotation.x = Math.max(0, -Math.cos(phase)) * swing * 1.5 + 0.12;
-        b.shinR.rotation.x = Math.max(0, -Math.cos(phase + Math.PI)) * swing * 1.5 + 0.12;
-        b.hips.position.y = 0.94 + Math.abs(Math.sin(phase)) * 0.035 * moving - 0.03 * running;
-        b.hips.rotation.y = Math.sin(phase) * 0.09 * moving;
+        // Knees only bend backwards and plant on contact.
+        b.shinL.rotation.x = Math.max(0, -Math.cos(phase)) * swing * 1.6 + 0.1;
+        b.shinR.rotation.x = Math.max(0, -Math.cos(phase + Math.PI)) * swing * 1.6 + 0.1;
+        b.hips.position.y = 0.94 + Math.abs(Math.sin(phase)) * 0.04 * moving - 0.045 * running;
+        b.hips.rotation.y = Math.sin(phase) * 0.1 * moving;
+        b.hips.rotation.z = Math.sin(phase * 2) * 0.02 * moving;
         b.spine.rotation.x = lean;
-        b.chest.rotation.y = -Math.sin(phase) * 0.12 * moving;
-        // Arms counter-swing (less when aiming)
-        const armSwing = (1 - this.aimBlend * 0.75) * swing * 1.1;
-        b.armL.rotation.x = -legSwing * 0.9 * (1 - this.aimBlend) + this.aimBlend * 0.6;
-        b.armR.rotation.x = -legSwing2 * 0.9 * (1 - this.aimBlend) + this.aimBlend * 0.85;
-        b.armL.rotation.z = 0.14 + this.aimBlend * 0.35;
-        b.armR.rotation.z = -0.14 - this.aimBlend * 0.35;
-        b.foreL.rotation.x = -0.5 - this.aimBlend * 0.6;
-        b.foreR.rotation.x = -0.7 - this.aimBlend * 0.8;
-        void armSwing;
+        b.chest.rotation.y = -Math.sin(phase) * 0.14 * moving;
+        b.chest.rotation.z = -Math.sin(phase) * 0.03 * moving;
+        // Arms counter-swing, but freeze into the weapon carry as aim rises.
+        const free = 1 - this.aimBlend;
+        b.armL.rotation.x = -legSwing * 0.85 * free;
+        b.armR.rotation.x = -legSwing2 * 0.85 * free;
+        b.armL.rotation.z = 0.16;
+        b.armR.rotation.z = -0.16;
+        b.foreL.rotation.x = -0.45 - 0.5 * this.aimBlend;
+        b.foreR.rotation.x = -0.6 - 0.6 * this.aimBlend;
         break;
       }
       case 'CROUCH_WALK': {
         const p2 = t * 5.0;
-        b.hips.position.y = 0.72 + Math.abs(Math.sin(p2)) * 0.02;
-        b.legL.rotation.x = -0.85 + Math.sin(p2) * 0.5;
-        b.legR.rotation.x = -0.85 + Math.sin(p2 + Math.PI) * 0.5;
-        b.shinL.rotation.x = 1.5 - Math.sin(p2) * 0.5;
-        b.shinR.rotation.x = 1.5 - Math.sin(p2 + Math.PI) * 0.5;
+        b.hips.position.y = 0.74 + Math.abs(Math.sin(p2)) * 0.02;
+        b.legL.rotation.x = -0.9 + Math.sin(p2) * 0.5;
+        b.legR.rotation.x = -0.9 + Math.sin(p2 + Math.PI) * 0.5;
+        b.shinL.rotation.x = 1.55 - Math.sin(p2) * 0.5;
+        b.shinR.rotation.x = 1.55 - Math.sin(p2 + Math.PI) * 0.5;
+        b.legL.rotation.z = 0.1;
+        b.legR.rotation.z = -0.1;
         b.spine.rotation.x = 0.3;
-        b.armL.rotation.x = 0.3;
-        b.armR.rotation.x = 0.4;
-        b.foreL.rotation.x = -0.8;
-        b.foreR.rotation.x = -1.0;
         break;
       }
       case 'PRONE': {
-        b.hips.position.y = 0.28;
+        b.hips.position.y = 0.3;
         b.hips.rotation.x = -Math.PI / 2 + 0.12;
         b.legL.rotation.x = 0.12;
         b.legR.rotation.x = 0.16;
         b.shinL.rotation.x = 0.2;
         b.shinR.rotation.x = 0.1;
-        b.spine.rotation.x = -0.25;
-        b.armL.rotation.x = -0.5;
-        b.armR.rotation.x = -0.55;
-        b.foreL.rotation.x = -1.0;
-        b.foreR.rotation.x = -1.1;
+        b.spine.rotation.x = -0.28;
+        b.head.rotation.x = -0.2;
         break;
       }
       case 'JUMP':
       case 'FALL': {
         const rising = state === 'JUMP';
-        b.legL.rotation.x = rising ? -0.5 : 0.25;
-        b.legR.rotation.x = rising ? 0.35 : -0.15;
-        b.shinL.rotation.x = rising ? 0.7 : 0.35;
-        b.shinR.rotation.x = rising ? 0.2 : 0.4;
-        b.armL.rotation.x = -0.9 + this.aimBlend;
-        b.armR.rotation.x = -1.1 + this.aimBlend * 0.5;
-        b.armL.rotation.z = 0.5;
-        b.armR.rotation.z = -0.5;
-        b.foreL.rotation.x = -0.6;
-        b.foreR.rotation.x = -0.8;
-        b.spine.rotation.x = rising ? -0.1 : 0.16;
+        b.legL.rotation.x = rising ? -0.55 : 0.3;
+        b.legR.rotation.x = rising ? 0.4 : -0.18;
+        b.shinL.rotation.x = rising ? 0.75 : 0.4;
+        b.shinR.rotation.x = rising ? 0.25 : 0.45;
+        b.spine.rotation.x = rising ? -0.12 : 0.18;
+        b.armL.rotation.z = 0.45 * (1 - this.aimBlend * 0.6);
+        b.armR.rotation.z = -0.45 * (1 - this.aimBlend * 0.6);
+        if (this.aimBlend < 0.3) {
+          b.armL.rotation.x = -0.9;
+          b.armR.rotation.x = -1.1;
+        }
         break;
       }
       case 'LAND': {
         const k = Math.min(1, actor.landingImpact / 16);
-        b.hips.position.y = 0.94 - 0.3 * k;
+        b.hips.position.y = 0.94 - 0.32 * k;
         b.legL.rotation.x = -0.9 * k;
         b.legR.rotation.x = -0.9 * k;
-        b.shinL.rotation.x = 1.6 * k;
-        b.shinR.rotation.x = 1.6 * k;
-        b.spine.rotation.x = 0.4 * k;
-        b.armL.rotation.x = 0.6 * k;
-        b.armR.rotation.x = 0.6 * k;
+        b.legL.rotation.z = 0.12 * k;
+        b.legR.rotation.z = -0.12 * k;
+        b.shinL.rotation.x = 1.65 * k;
+        b.shinR.rotation.x = 1.65 * k;
+        b.spine.rotation.x = 0.42 * k;
         break;
       }
       case 'SLIDE': {
-        b.hips.position.y = 0.55;
+        b.hips.position.y = 0.56;
         b.hips.rotation.x = -0.5;
-        b.legL.rotation.x = -1.2;
+        b.legL.rotation.x = -1.25;
         b.legR.rotation.x = -0.5;
-        b.shinL.rotation.x = 1.2;
+        b.shinL.rotation.x = 1.25;
         b.shinR.rotation.x = 0.4;
         b.spine.rotation.x = 0.3;
         b.armL.rotation.x = -0.4;
@@ -527,132 +799,132 @@ export class CharacterRig {
       case 'SWIM': {
         const p3 = t * 3.4;
         b.hips.position.y = 0.5;
-        b.hips.rotation.x = -0.7;
+        b.hips.rotation.x = -0.72;
         b.legL.rotation.x = Math.sin(p3) * 0.6;
         b.legR.rotation.x = Math.sin(p3 + Math.PI) * 0.6;
         b.shinL.rotation.x = 0.5;
         b.shinR.rotation.x = 0.5;
-        b.armL.rotation.x = -1.4 + Math.sin(p3) * 0.8;
-        b.armR.rotation.x = -1.4 + Math.sin(p3 + Math.PI) * 0.8;
-        b.armL.rotation.z = 0.4;
-        b.armR.rotation.z = -0.4;
+        b.armL.rotation.x = -1.4 + Math.sin(p3) * 0.85;
+        b.armR.rotation.x = -1.4 + Math.sin(p3 + Math.PI) * 0.85;
+        b.armL.rotation.z = 0.45;
+        b.armR.rotation.z = -0.45;
         b.spine.rotation.x = -0.2;
         break;
       }
       case 'SKYDIVE': {
-        b.hips.rotation.x = -1.15;
-        b.spine.rotation.x = -0.25;
-        b.legL.rotation.x = 0.35;
-        b.legR.rotation.x = 0.3;
+        b.hips.rotation.x = -1.1;
+        b.spine.rotation.x = -0.3;
+        b.head.rotation.x = -0.35;
+        b.legL.rotation.x = 0.4;
+        b.legR.rotation.x = 0.34;
         b.shinL.rotation.x = 0.5;
         b.shinR.rotation.x = 0.45;
-        b.armL.rotation.z = 1.35;
-        b.armR.rotation.z = -1.35;
-        b.armL.rotation.x = -0.4;
-        b.armR.rotation.x = -0.4;
-        b.foreL.rotation.x = -0.5;
-        b.foreR.rotation.x = -0.5;
+        b.armL.rotation.z = 1.4;
+        b.armR.rotation.z = -1.4;
+        b.armL.rotation.x = -0.45;
+        b.armR.rotation.x = -0.45;
         break;
       }
       case 'PARACHUTE': {
-        b.hips.rotation.x = -0.35;
-        b.legL.rotation.x = 0.5;
-        b.legR.rotation.x = 0.35;
-        b.shinL.rotation.x = 0.8;
-        b.shinR.rotation.x = 0.7;
+        b.hips.rotation.x = -0.32;
+        b.legL.rotation.x = 0.55;
+        b.legR.rotation.x = 0.4;
+        b.shinL.rotation.x = 0.85;
+        b.shinR.rotation.x = 0.72;
         b.armL.rotation.z = 1.5;
         b.armR.rotation.z = -1.5;
-        b.armL.rotation.x = -2.4;
-        b.armR.rotation.x = -2.4;
-        b.foreL.rotation.x = -0.3;
-        b.foreR.rotation.x = -0.35;
+        b.armL.rotation.x = -2.35;
+        b.armR.rotation.x = -2.35;
         break;
       }
       case 'DOWNED': {
-        b.hips.position.y = 0.3;
-        b.hips.rotation.x = -1.2;
+        b.hips.position.y = 0.32;
+        b.hips.rotation.x = -1.25;
         b.legL.rotation.x = 0.3;
         b.legR.rotation.x = 0.45;
-        b.armL.rotation.x = -0.6;
-        b.armR.rotation.x = -0.5;
         b.spine.rotation.x = -0.3;
         const crawl = Math.sin(t * 4) * 0.2;
-        b.armL.rotation.z = 0.7 + crawl;
-        b.armR.rotation.z = -0.7 - crawl;
+        b.armL.rotation.z = 0.75 + crawl;
+        b.armR.rotation.z = -0.75 - crawl;
+        b.armL.rotation.x = -0.55;
+        b.armR.rotation.x = -0.5;
         break;
       }
       case 'DEAD': {
         this.deathProgress = Math.min(1, this.deathProgress + dt * 2.2);
         const k = this.deathProgress;
-        b.hips.position.y = lerp(0.94, 0.26, k);
-        b.hips.rotation.x = lerp(0, -1.45, k);
-        b.legL.rotation.x = lerp(0, 0.25, k);
-        b.legR.rotation.x = lerp(0, 0.5, k);
-        b.armL.rotation.z = lerp(0, 1.3, k);
-        b.armR.rotation.z = lerp(0, -1.1, k);
+        b.hips.position.y = lerp(0.94, 0.24, k);
+        b.hips.rotation.x = lerp(0, -1.5, k);
+        b.legL.rotation.x = lerp(0, 0.3, k);
+        b.legR.rotation.x = lerp(0, 0.55, k);
+        b.armL.rotation.z = lerp(0, 1.35, k);
+        b.armR.rotation.z = lerp(0, -1.15, k);
         b.armL.rotation.x = lerp(0, -0.5, k);
         b.armR.rotation.x = lerp(0, -0.35, k);
-        b.head.rotation.x = lerp(0, 0.4, k);
+        b.head.rotation.x = lerp(0, 0.45, k);
         break;
       }
       case 'DRIVE': {
         b.hips.position.y = 0.6;
-        b.legL.rotation.x = -1.1;
-        b.legR.rotation.x = -1.1;
+        b.legL.rotation.x = -1.15;
+        b.legR.rotation.x = -1.15;
         b.shinL.rotation.x = 1.2;
         b.shinR.rotation.x = 1.2;
-        b.armL.rotation.x = -1.2;
-        b.armR.rotation.x = -1.2;
-        b.foreL.rotation.x = -0.7;
-        b.foreR.rotation.x = -0.7;
+        b.spine.rotation.x = 0.1;
         break;
       }
       case 'CLIMB': {
-        b.armL.rotation.x = -2.4;
-        b.armR.rotation.x = -2.2;
-        b.legL.rotation.x = -1.2;
+        b.armL.rotation.x = -2.45;
+        b.armR.rotation.x = -2.25;
+        b.legL.rotation.x = -1.25;
         b.legR.rotation.x = -0.4;
-        b.shinL.rotation.x = 1.3;
+        b.shinL.rotation.x = 1.35;
         b.spine.rotation.x = 0.3;
         break;
       }
       case 'AIRCRAFT':
       default: {
-        b.armL.rotation.x = -2.6;
-        b.armR.rotation.x = -2.6;
+        b.armL.rotation.x = -2.55;
+        b.armR.rotation.x = -2.55;
         b.legL.rotation.x = 0.15;
         b.legR.rotation.x = 0.12;
         break;
       }
     }
 
-    // Upper body aim: rotate the chest toward the aim pitch and roll shoulders.
+    // Two-handed carry and aim follow-through.
+    const holdable = state === 'IDLE' || state === 'WALK' || state === 'RUN' || state === 'SPRINT' ||
+      state === 'CROUCH_IDLE' || state === 'CROUCH_WALK' || state === 'JUMP' || state === 'FALL' ||
+      state === 'LAND' || state === 'RELOAD' || state === 'HEAL';
+    if (holdable && actor.vehicleId === null) this.holdWeapon(this.aimBlend, ads);
+
+    // Upper-body aim: chest twists toward the pitch, head follows the target.
     const aimPitchClamped = clamp(aimPitch, -1.2, 1.2);
-    if (this.aimBlend > 0.02 && (state === 'IDLE' || state === 'WALK' || state === 'RUN' || state === 'SPRINT' || state === 'CROUCH_IDLE' || state === 'CROUCH_WALK')) {
-      b.chest.rotation.x += aimPitchClamped * -0.55 * this.aimBlend;
-      b.head.rotation.x += aimPitchClamped * -0.35 * this.aimBlend;
-      b.armR.rotation.x += this.aimBlend * -0.5;
-      b.armL.rotation.x += this.aimBlend * -0.35;
-      b.armR.rotation.z += this.aimBlend * -0.25;
-      b.armL.rotation.z += this.aimBlend * 0.28;
+    if (this.aimBlend > 0.02 && holdable) {
+      b.chest.rotation.x += aimPitchClamped * -0.5 * this.aimBlend;
+      b.head.rotation.x += aimPitchClamped * -0.4 * this.aimBlend;
     }
 
-    // Fire kick on the weapon arm
     if (this.fireKick > 0.01) {
-      b.foreR.rotation.x += this.fireKick * 0.22;
-      b.armR.rotation.x += this.fireKick * 0.18;
-      b.chest.rotation.x += this.fireKick * 0.06;
+      b.foreR.rotation.x += this.fireKick * 0.24;
+      b.armR.rotation.x += this.fireKick * 0.2;
+      b.chest.rotation.x += this.fireKick * 0.07;
     }
-    // Reload motion: hand travels to the magazine
     if (this.reloadBlend > 0.01) {
       const rp = Math.sin(this.animTime * 9) * 0.5 + 0.5;
-      b.armL.rotation.x += this.reloadBlend * (-0.9 + rp * 0.5);
-      b.foreL.rotation.x += this.reloadBlend * (-1.4 + rp * 0.9);
+      b.armL.rotation.x += this.reloadBlend * (-0.95 + rp * 0.5);
+      b.foreL.rotation.x += this.reloadBlend * (-1.45 + rp * 0.9);
       b.foreL.rotation.z += this.reloadBlend * 0.4;
-      b.armR.rotation.x += this.reloadBlend * 0.18;
+      b.armR.rotation.x += this.reloadBlend * 0.2;
+    }
+    if (this.flinchTimer > 0.01) {
+      const f = this.flinchTimer * 2.2;
+      b.chest.rotation.x -= f * 0.12;
+      b.spine.rotation.x -= f * 0.06;
+      b.armL.rotation.x -= f * 0.2;
+      b.armR.rotation.x -= f * 0.15;
     }
 
-    // Whole-body orientation follows the actor's yaw.
     this.root.rotation.y = actor.yaw;
     this.root.position.set(actor.position.x, actor.position.y, actor.position.z);
     this.simpleRoot.rotation.y = actor.yaw;
@@ -660,94 +932,187 @@ export class CharacterRig {
     this.setParachute(state === 'PARACHUTE');
   }
 
-  private deathProgress = 0;
+  /**
+   * Lobby pose: standing at rest with the weapon carried diagonally across the
+   * chest, breathing and shifting weight so the model never looks like a
+   * mannequin on the platform.
+   */
+  private updateShowcase(dt: number): void {
+    const b = this.bones;
+    this.showcasePhase += dt;
+    const t = this.showcasePhase;
+    const breath = Math.sin(t * 1.15) * 0.014;
+    const sway = Math.sin(t * 0.37) * 0.035;
+    this.resetPose();
+
+    b.hips.position.y = 0.94 + breath * 0.5;
+    b.hips.rotation.y = sway;
+    b.hips.rotation.z = 0.03;
+    b.spine.rotation.x = 0.03 + breath * 0.4;
+    b.spine.rotation.y = sway * 0.4;
+    b.chest.rotation.x = -0.04 + breath;
+    b.chest.rotation.y = -sway * 0.6;
+    b.head.rotation.y = sway * 1.6;
+    b.head.rotation.x = Math.sin(t * 0.53) * 0.05;
+
+    // Weight on the right leg, left leg relaxed forward.
+    b.legR.rotation.x = 0.02;
+    b.legR.rotation.z = -0.05;
+    b.shinR.rotation.x = 0.08;
+    b.legL.rotation.x = -0.18;
+    b.legL.rotation.z = 0.12;
+    b.shinL.rotation.x = 0.26;
+
+    if (this.weaponId) {
+      // Hero carry: weapon diagonal across the chest, both hands on it.
+      b.armR.rotation.x = -0.62 + breath * 0.6;
+      b.armR.rotation.z = -0.30;
+      b.armR.rotation.y = 0.22;
+      b.foreR.rotation.x = -1.15;
+      b.armL.rotation.x = -0.72 + breath * 0.5;
+      b.armL.rotation.y = 0.9;
+      b.armL.rotation.z = 0.5;
+      b.foreL.rotation.x = -1.0;
+      b.foreL.rotation.y = -0.32;
+      this.bones.weaponAnchor.rotation.set(0.16, 0.45, 0.06);
+      this.bones.weaponAnchor.position.set(0, -0.30, -0.10);
+    } else {
+      b.armL.rotation.x = 0.06 + breath;
+      b.armR.rotation.x = 0.06 + breath;
+      b.armL.rotation.z = 0.10;
+      b.armR.rotation.z = -0.10;
+      b.foreL.rotation.x = -0.22;
+      b.foreR.rotation.x = -0.22;
+    }
+
+    this.root.rotation.y = 0;
+    this.root.position.set(0, 0, 0);
+    this.setParachute(false);
+  }
+
+  /** Advances the lobby/showcase pose without an Actor (menus own the rig). */
+  tickShowcase(dt: number): void {
+    if (!this.showcase) return;
+    this.updateShowcase(dt);
+  }
+
+  /** Which weapon model is currently attached. */
+  get currentWeapon(): string {
+    return this.weaponId;
+  }
 
   /** Death pose progress reset (when respawning). */
   reset(): void {
     this.deathProgress = 0;
     this.animTime = 0;
+    this.bones.weaponAnchor.rotation.set(0, 0, 0);
+    this.bones.weaponAnchor.position.set(0, -0.30, -0.10);
   }
 
+  /** Geometry is shared between rigs, so there is nothing per-rig to free. */
   dispose(): void {
-    this.root.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (mesh.isMesh) mesh.geometry.dispose();
-    });
-    this.simpleRoot.traverse((o) => {
-      const mesh = o as THREE.Mesh;
-      if (mesh.isMesh) mesh.geometry.dispose();
-    });
+    if (this.weaponMesh) {
+      this.bones.weaponAnchor.remove(this.weaponMesh);
+      this.weaponMesh = null;
+    }
+    this.parachute = null;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Original weapon shapes                                              */
+/* ------------------------------------------------------------------ */
+
+/** Smooth primitives keep the weapons consistent with the body style. */
+function wbox(w: number, h: number, d: number, x: number, y: number, z: number): THREE.BufferGeometry {
+  return roundBox(w, h, d, Math.min(w, h) * 0.22, x, y, z, Math.min(0.008, w * 0.15));
+}
+function wcyl(rTop: number, rBot: number, h: number, x: number, y: number, z: number, rotX = 0, seg = 10): THREE.BufferGeometry {
+  const g = new THREE.CylinderGeometry(rTop, rBot, h, seg);
+  if (rotX) g.rotateX(rotX);
+  g.translate(x, y, z);
+  return g;
 }
 
 /** Original weapon shapes, matched to the weapon class. */
 export function buildWeaponGeometry(weaponId: string): THREE.BufferGeometry | null {
   const cls = weaponClassOf(weaponId);
   const geoms: THREE.BufferGeometry[] = [];
-  const add = (g: THREE.BufferGeometry): void => {
-    geoms.push(g);
-  };
+  const add = (g: THREE.BufferGeometry): void => { geoms.push(g); };
+  const stock = (len: number, y: number): THREE.BufferGeometry => wbox(0.05, 0.075, len, 0, y, -0.30 - len / 2 + 0.06);
+  const optic = (): THREE.BufferGeometry[] => [
+    wcyl(0.026, 0.026, 0.11, 0, 0.085, 0.02, Math.PI / 2, 10),
+    wbox(0.05, 0.035, 0.06, 0, 0.062, 0.02),
+    wbox(0.03, 0.03, 0.02, 0, 0.085, 0.1)
+  ];
+
   switch (cls) {
     case 'AR':
-      add(box(0.075, 0.10, 0.55, 0, 0, 0));
-      add(box(0.05, 0.16, 0.09, 0, -0.11, 0.06));      // magazine
-      add(box(0.045, 0.045, 0.20, 0, 0.01, 0.34));      // barrel
-      add(box(0.04, 0.07, 0.12, 0, -0.06, -0.18));      // grip
-      add(box(0.05, 0.06, 0.20, 0, -0.01, -0.28));      // stock
-      add(box(0.03, 0.05, 0.08, 0, 0.08, 0.05));        // optic
+      add(wbox(0.062, 0.095, 0.5, 0, 0, 0));
+      add(wbox(0.048, 0.15, 0.085, 0, -0.105, 0.04));      // curved mag
+      add(wcyl(0.019, 0.019, 0.26, 0, 0.005, 0.32, Math.PI / 2)); // barrel
+      add(wbox(0.042, 0.075, 0.11, 0, -0.055, -0.16));     // grip
+      add(stock(0.20, -0.005));
+      add(wbox(0.05, 0.05, 0.13, 0, -0.045, 0.16));        // handguard
+      for (const g of optic()) add(g);
       break;
     case 'SMG':
-      add(box(0.065, 0.09, 0.36, 0, 0, 0));
-      add(box(0.045, 0.20, 0.07, 0, -0.13, 0.02));
-      add(box(0.035, 0.035, 0.14, 0, 0, 0.24));
-      add(box(0.04, 0.06, 0.10, 0, -0.05, -0.14));
-      add(box(0.05, 0.05, 0.14, 0, 0, -0.20));
+      add(wbox(0.058, 0.085, 0.34, 0, 0, 0));
+      add(wcyl(0.032, 0.032, 0.19, 0, -0.12, 0.02, Math.PI / 2));  // fat can mag
+      add(wcyl(0.016, 0.016, 0.16, 0, 0, 0.22, Math.PI / 2));
+      add(wbox(0.04, 0.07, 0.10, 0, -0.05, -0.13));
+      add(wbox(0.045, 0.055, 0.16, 0, -0.005, -0.22));     // folded stock
+      add(wbox(0.045, 0.05, 0.12, 0, -0.04, 0.12));
       break;
     case 'SHOTGUN':
-      add(box(0.08, 0.10, 0.72, 0, 0, 0));
-      add(box(0.055, 0.055, 0.5, 0, 0.055, 0.35));
-      add(box(0.05, 0.10, 0.18, 0, -0.07, -0.26));
-      add(box(0.06, 0.05, 0.16, 0, -0.02, 0.16));
+      add(wbox(0.07, 0.095, 0.66, 0, 0, 0));
+      add(wcyl(0.024, 0.024, 0.5, 0, 0.05, 0.34, Math.PI / 2));   // twin tubes
+      add(wcyl(0.024, 0.024, 0.44, 0, -0.01, 0.30, Math.PI / 2));
+      add(wbox(0.05, 0.095, 0.16, 0, -0.06, -0.24));
+      add(wbox(0.055, 0.045, 0.14, 0, -0.015, 0.14));      // pump
       break;
     case 'DMR':
-      add(box(0.07, 0.10, 0.70, 0, 0, 0));
-      add(box(0.05, 0.18, 0.10, 0, -0.12, 0.05));
-      add(box(0.04, 0.05, 0.55, 0, 0.02, 0.5));
-      add(box(0.045, 0.07, 0.14, 0, -0.06, -0.22));
-      add(box(0.05, 0.08, 0.30, 0, -0.01, -0.40));
-      add(box(0.045, 0.06, 0.16, 0, 0.10, 0.02));
+      add(wbox(0.062, 0.09, 0.64, 0, 0, 0));
+      add(wbox(0.05, 0.17, 0.095, 0, -0.115, 0.04));
+      add(wcyl(0.017, 0.017, 0.5, 0, 0.01, 0.44, Math.PI / 2));
+      add(wbox(0.042, 0.075, 0.13, 0, -0.055, -0.2));
+      add(stock(0.28, 0));
+      for (const g of optic()) add(g);
       break;
     case 'SNIPER':
-      add(box(0.07, 0.11, 0.95, 0, 0, 0));
-      add(box(0.05, 0.05, 0.85, 0, 0.02, 0.75));
-      add(box(0.045, 0.15, 0.10, 0, -0.11, 0.06));
-      add(box(0.05, 0.09, 0.34, 0, -0.02, -0.45));
-      add(box(0.05, 0.06, 0.26, 0, 0.11, 0.05));  // scope tube
-      add(box(0.07, 0.07, 0.05, 0, 0.11, -0.08));
+      add(wbox(0.06, 0.10, 0.88, 0, 0, 0));
+      add(wcyl(0.015, 0.015, 0.78, 0, 0.015, 0.68, Math.PI / 2));
+      add(wbox(0.042, 0.14, 0.09, 0, -0.10, 0.05));
+      add(stock(0.34, -0.01));
+      add(wcyl(0.03, 0.03, 0.3, 0, 0.105, 0.03, Math.PI / 2));  // scope tube
+      add(wcyl(0.045, 0.045, 0.05, 0, 0.105, -0.11, Math.PI / 2)); // eyepiece
+      add(wcyl(0.04, 0.04, 0.05, 0, 0.105, 0.19, Math.PI / 2));
+      add(wbox(0.03, 0.06, 0.03, 0, 0.07, 0.03));
+      add(wbox(0.03, 0.06, 0.03, 0, 0.07, -0.03));
       break;
     case 'LMG':
-      add(box(0.09, 0.13, 0.72, 0, 0, 0));
-      add(box(0.09, 0.20, 0.16, 0, -0.15, 0.05));  // box mag
-      add(box(0.05, 0.05, 0.45, 0, 0.02, 0.55));
-      add(box(0.05, 0.08, 0.16, 0, -0.07, -0.22));
-      add(box(0.05, 0.07, 0.28, 0, -0.01, -0.42));
+      add(wbox(0.075, 0.115, 0.66, 0, 0, 0));
+      add(wbox(0.085, 0.19, 0.15, 0, -0.145, 0.03));       // box mag
+      add(wcyl(0.022, 0.022, 0.44, 0, 0.012, 0.52, Math.PI / 2));
+      add(wbox(0.045, 0.075, 0.15, 0, -0.06, -0.2));
+      add(stock(0.26, -0.005));
+      add(wbox(0.055, 0.05, 0.16, 0, -0.05, 0.16));
       break;
     case 'PISTOL':
-      add(box(0.05, 0.09, 0.22, 0, 0, 0));
-      add(box(0.04, 0.12, 0.05, 0, -0.10, -0.02));
-      add(box(0.04, 0.045, 0.10, 0, 0.005, 0.14));
+      add(wbox(0.042, 0.085, 0.19, 0, 0, 0));
+      add(wbox(0.038, 0.115, 0.05, 0, -0.095, -0.03));
+      add(wcyl(0.011, 0.011, 0.09, 0, 0.005, 0.13, Math.PI / 2));
+      add(wbox(0.02, 0.02, 0.03, 0, 0.05, -0.06));
       break;
     case 'MELEE':
-      add(box(0.045, 0.045, 0.14, 0, 0, -0.04));  // handle
-      add(box(0.02, 0.11, 0.30, 0, 0.02, 0.16));  // blade
-      add(box(0.10, 0.03, 0.05, 0, 0, -0.10));    // guard
+      add(wbox(0.032, 0.032, 0.13, 0, 0, -0.05));          // handle
+      add(wbox(0.014, 0.09, 0.28, 0, 0.02, 0.14));         // blade
+      add(wbox(0.07, 0.025, 0.04, 0, 0, -0.11));           // guard
       break;
     default:
       return null;
   }
-  const merged = mergeGeometries(geoms, false);
-  for (const g of geoms) g.dispose();
-  return merged;
+  return mergeAll(geoms);
 }
 
 export function weaponClassOf(weaponId: string): string {

@@ -762,3 +762,61 @@ body.touch .touch-controls { display: block; }
 .briefing-item { display: flex; gap: 10px; font-size: 13px; color: var(--text-dim); line-height: 1.5; }
 .briefing-item b { color: var(--accent); font-weight: 600; }
 .briefing-item .n { font-family: var(--mono); color: var(--text-mute); font-size: 11px; padding-top: 2px; }
+
+/* --------------------------------------------------------------------------
+   Match lobby: operator card rack, countdown ring, centre stage for the model.
+   -------------------------------------------------------------------------- */
+
+.lobby-bar {
+  display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 26px 0; position: relative; z-index: 2;
+}
+.lobby-chip {
+  display: flex; flex-direction: column; gap: 2px; padding: 8px 14px;
+  background: linear-gradient(180deg, rgba(16, 23, 32, 0.85), rgba(8, 12, 16, 0.7));
+  border: 1px solid var(--line); min-width: 150px;
+  clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+.lobby-chip .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 2px; color: var(--text-mute); }
+.lobby-chip b { font-size: 15px; letter-spacing: 1.4px; text-transform: uppercase; }
+
+.lobby-body {
+  flex: 1; display: grid; grid-template-columns: minmax(280px, 360px) 1fr minmax(260px, 330px);
+  gap: 18px; padding: 18px 26px 26px; position: relative; z-index: 2; overflow: hidden;
+}
+.lobby-side { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+.lobby-side.right { justify-content: flex-end; }
+.lobby-center { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 18px; pointer-events: none; }
+.lobby-hint {
+  margin-top: 10px; font-size: 12px; letter-spacing: 1px; color: var(--text-mute);
+  text-transform: uppercase; text-shadow: 0 2px 8px rgba(0, 0, 0, 0.85);
+}
+.countdown-ring {
+  width: 148px; height: 148px; border-radius: 50%;
+  border: 2px solid rgba(99, 215, 255, 0.35);
+  background: radial-gradient(circle at 50% 40%, rgba(99, 215, 255, 0.16), rgba(5, 7, 10, 0.75) 70%);
+  box-shadow: 0 0 32px rgba(43, 143, 181, 0.35), inset 0 0 24px rgba(99, 215, 255, 0.12);
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.countdown-value { font-family: var(--mono); font-size: 54px; line-height: 1; letter-spacing: 2px; }
+.countdown-label { font-family: var(--mono); font-size: 9px; letter-spacing: 2px; color: var(--text-dim); margin-top: 6px; }
+
+.operator-card {
+  display: flex; align-items: center; gap: 12px; padding: 10px; margin-bottom: 8px;
+  background: linear-gradient(90deg, rgba(22, 32, 43, 0.9), rgba(10, 14, 19, 0.6));
+  border: 1px solid var(--line);
+}
+.operator-card.dim { opacity: 0.66; }
+.op-avatar {
+  width: 42px; height: 42px; flex: 0 0 42px; display: grid; place-items: center;
+  background: linear-gradient(160deg, var(--accent-dim), #14313d);
+  color: #04121a; font-weight: 700; font-size: 20px;
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+}
+.op-meta { min-width: 0; }
+.op-name { font-size: 15px; letter-spacing: 1.2px; text-transform: uppercase; display: flex; align-items: center; gap: 8px; }
+.op-sub { font-size: 12px; color: var(--text-mute); }
+
+@media (max-width: 1180px) {
+  .lobby-body { grid-template-columns: minmax(240px, 320px) 1fr; }
+  .lobby-side.right { display: none; }
+}

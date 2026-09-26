@@ -13,7 +13,9 @@
 import { JSDOM } from 'jsdom';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as THREE from 'three';
 import { Game, type GameStatus } from '../src/app/Game';
+import { CharacterRig, buildWeaponGeometry } from '../src/render/CharacterRig';
 import { settings } from '../src/core/Settings';
 import { save } from '../src/core/SaveManager';
 
@@ -192,6 +194,50 @@ function effectivePointerEvents(): { total: number; blocked: string[] } {
 /* Static audit of the UI wiring                                       */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Structural check on the procedural character: every body part must end up
+ * with real geometry. A mixed index state used to make `mergeGeometries`
+ * return null, which silently deleted whole limbs from the model.
+ */
+function auditCharacterRig(): void {
+  section('Character rig');
+  const variants: Array<{ helmet: boolean; vest: boolean }> = [
+    { helmet: true, vest: true },
+    { helmet: false, vest: true },
+    { helmet: true, vest: false },
+    { helmet: false, vest: false }
+  ];
+  let meshes = 0;
+  let vertices = 0;
+  const broken: string[] = [];
+  for (const cosmetic of variants) {
+    const rig = new CharacterRig(0, cosmetic);
+    rig.root.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      meshes++;
+      const pos = mesh.geometry.attributes.position;
+      const count = pos ? pos.count : 0;
+      vertices += count;
+      if (count === 0) broken.push(`${cosmetic.helmet ? 'helmet' : 'hair'}/${cosmetic.vest ? 'vest' : 'plain'}:${mesh.name || 'unnamed'}`);
+    });
+    rig.setWeapon('vk77');
+    rig.setShowcase(true);
+    rig.tickShowcase(0.5);
+    rig.dispose();
+  }
+  check('every character body part has geometry', broken.length === 0, broken.slice(0, 4).join(', '));
+  check('character has a full mesh set', meshes >= 40, `${meshes} meshes across ${variants.length} variants`);
+  check('character geometry stays lightweight', vertices / variants.length < 35000, `${Math.round(vertices / variants.length)} verts per character`);
+
+  const weaponClasses = ['vk77', 'hornet9', 'breach12', 'bolt7', 'specter', 'bulwark', 'p9', 'blade'];
+  const missing = weaponClasses.filter((id) => {
+    const geo = buildWeaponGeometry(id);
+    return !geo || !geo.attributes.position || geo.attributes.position.count === 0;
+  });
+  check('every weapon class has a model', missing.length === 0, missing.join(', '));
+}
+
 function auditUiWiring(): void {
   section('Static UI audit');
   const root = process.cwd();
@@ -247,6 +293,8 @@ function auditUiWiring(): void {
 async function main(): Promise<void> {
   const win = installEnvironment();
   auditUiWiring();
+
+  auditCharacterRig();
 
   section('Engine + world boot');
   const root = document.getElementById('app') as HTMLElement;

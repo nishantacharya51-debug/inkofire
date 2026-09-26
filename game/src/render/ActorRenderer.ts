@@ -11,8 +11,8 @@ import { WEAPONS } from '../items/Items';
  * still renders at a stable frame rate.
  */
 
-const RIG_DISTANCE = 78;
-const SIMPLE_DISTANCE = 220;
+const RIG_DISTANCE = 46;
+const SIMPLE_DISTANCE = 175;
 const NAMEPLATE_DISTANCE = 190;
 
 interface ActorView {

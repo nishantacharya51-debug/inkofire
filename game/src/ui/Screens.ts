@@ -299,30 +299,65 @@ export function setupScreen(mode: 'BR' | 'CLASH' | 'LONE' | 'TRAINING', ctx: Men
 }
 
 export function lobbyScreen(ctx: { mode: string; teamSize: number; playerCount: number; seconds: number; mapName: string; difficulty: string }): string {
+  const squadLabel = ctx.teamSize === 1 ? 'Solo' : ctx.teamSize === 2 ? 'Duo' : 'Squad';
+  const teammates = Math.max(0, ctx.teamSize - 1);
+  const callsigns = ['VECTOR', 'ORACLE', 'RAVEN', 'GHOST'];
+  const readyBadge = '<span class="badge good">READY</span>';
   return `
   <div class="screen" id="screen-lobby">
     ${topStrip('Leave', 'leave')}
-    <div class="menu-body" style="grid-template-columns:1fr minmax(320px,420px);">
-      <div class="panel" style="display:flex;flex-direction:column;">
-        <div class="panel-title">${esc(ctx.mode)} · ${ctx.mapName}</div>
-        <div style="flex:1;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;">
-          <div style="font-family:var(--mono);font-size:64px;letter-spacing:6px;" id="lobby-countdown">${Math.ceil(ctx.seconds)}</div>
-          <div class="hint">Dropship departs when the timer hits zero</div>
-          <div class="tips" style="max-width:560px;text-align:center;margin-top:10px;">
-            <b>Tip:</b> the dropship flies a straight line across the island. Jump early for the outer POIs, late for the city.
+    <div class="lobby-bar">
+      <div class="lobby-chip"><span class="tag">MODE</span><b>${esc(ctx.mode)}</b></div>
+      <div class="lobby-chip"><span class="tag">MAP</span><b>${esc(ctx.mapName)}</b></div>
+      <div class="lobby-chip"><span class="tag">FORMAT</span><b>${squadLabel} · ${ctx.playerCount} operators</b></div>
+      <div class="lobby-chip"><span class="tag">BOTS</span><b>${esc(ctx.difficulty)}</b></div>
+    </div>
+    <div class="lobby-body">
+      <div class="lobby-side">
+        <div class="panel">
+          <div class="panel-title">Your squad</div>
+          <div class="operator-card">
+            <div class="op-avatar">Y</div>
+            <div class="op-meta">
+              <div class="op-name">You ${readyBadge}</div>
+              <div class="op-sub">Squad leader · operator ready</div>
+            </div>
+          </div>
+          ${Array.from({ length: teammates }, (_, i) => `
+          <div class="operator-card dim">
+            <div class="op-avatar">${callsigns[i % callsigns.length][0]}</div>
+            <div class="op-meta">
+              <div class="op-name">${callsigns[i % callsigns.length]}</div>
+              <div class="op-sub">Filling slot ${i + 2} · bot operator</div>
+            </div>
+          </div>`).join('')}
+        </div>
+        <div class="panel">
+          <div class="panel-title">Drop plan</div>
+          <div class="briefing">
+            <div class="briefing-item"><span class="n">01</span><span>The dropship crosses <b>${esc(ctx.mapName)}</b> on a fixed line — jump when the target POI is under you.</span></div>
+            <div class="briefing-item"><span class="n">02</span><span>Free-fall is fast; pull the chute low for a tighter landing.</span></div>
+            <div class="briefing-item"><span class="n">03</span><span>Loot fast, then move with the ring. Out there, the zone wins fights for you.</span></div>
           </div>
         </div>
-        <button class="btn primary" data-action="ready">Ready up — board dropship</button>
       </div>
-      <div class="panel">
-        <div class="panel-title">Lobby · ${ctx.playerCount} players</div>
-        <div class="kv"><span>Mode</span><span>${esc(ctx.mode)}</span></div>
-        <div class="kv"><span>Squad size</span><span>${ctx.teamSize === 1 ? 'Solo' : ctx.teamSize === 2 ? 'Duo' : 'Squad'}</span></div>
-        <div class="kv"><span>Difficulty</span><span>${ctx.difficulty}</span></div>
-        <div class="squad-roster" style="margin-top:14px;">
-          <div class="roster-slot"><div class="tag">SLOT 1</div><div>You</div></div>
-          ${ctx.teamSize > 1 ? Array.from({ length: ctx.teamSize - 1 }, (_, i) => `<div class="roster-slot"><div class="tag">SLOT ${i + 2}</div><div>Auto-fill bot</div></div>`).join('') : ''}
+      <div class="lobby-center">
+        <div class="countdown-ring">
+          <div class="countdown-value" id="lobby-countdown">${Math.ceil(ctx.seconds)}</div>
+          <div class="countdown-label">DROPSHIP DEPARTS IN</div>
         </div>
+        <div class="lobby-hint">Drag on the deck to inspect your operator · scroll to zoom</div>
+      </div>
+      <div class="lobby-side right">
+        <div class="panel">
+          <div class="panel-title">Loadout</div>
+          <div class="kv"><span>Primary</span><span>VK-77</span></div>
+          <div class="kv"><span>Secondary</span><span>Raven 50</span></div>
+          <div class="kv"><span>Utility</span><span>Med kit · Frag</span></div>
+          <div class="kv"><span>Armour</span><span>Level 1 vest</span></div>
+        </div>
+        <button class="btn primary" data-action="ready" style="padding:18px 20px;">▶ Board dropship</button>
+        <button class="btn ghost" data-action="leave">Back to menu</button>
       </div>
     </div>
   </div>`;

@@ -13,6 +13,7 @@ import { PlayerController } from '../player/PlayerController';
 import { CameraRig } from '../camera/CameraRig';
 import { WorldRenderer } from '../render/WorldRenderer';
 import { ActorRenderer } from '../render/ActorRenderer';
+import { LobbyScene } from '../render/LobbyScene';
 import { CombatEffects } from '../render/CombatEffects';
 import { AudioSystem } from '../audio/AudioSystem';
 import { NetworkSession, LocalTransport } from '../network/NetworkSession';
@@ -66,6 +67,9 @@ export class Game implements UiHost {
   private effects: CombatEffects | null = null;
   private worldRenderer: WorldRenderer | null = null;
   private actorRenderer: ActorRenderer | null = null;
+  /** Lit hangar shown behind every menu, with the player's operator on a dais. */
+  private lobby: LobbyScene | null = null;
+  private lobbyVisible = false;
   private hud: Hud | null = null;
   private cameraRig: CameraRig | null = null;
   private controller: PlayerController | null = null;
@@ -196,26 +200,87 @@ export class Game implements UiHost {
     this.ui.setLoading(0.86, 'Preparing renderer…');
     await nextFrame();
     this.engine.applyQuality();
-    this.cameraRigless();
+    this.lobby?.applyQuality();
 
     this.ui.setLoading(1, 'Ready');
     await nextFrame();
+    this.showLobbyScene();
     this.input.requestPointerLock();
     this.audio.startMusic();
     this.showMainMenu();
     this.engine.onFixedUpdate((info) => this.step(info));
+    // Menus animate the lobby rig on the variable-dt frame callback.
+    this.engine.onRender((info) => {
+      if (this.lobby && this.lobbyVisible) this.lobby.update(info.dt);
+    });
+    this.bindLobbyInput();
     this.engine.start();
     this.booted = true;
   }
 
-  private cameraRigless(): void {
-    // Menu camera: slow orbit over the island so the background is alive.
-    this.engine.camera.position.set(180, 140, 180);
-    this.engine.camera.lookAt(0, 20, 0);
+  /**
+   * Menus render the lobby hangar instead of the world: the operator stands on
+   * a lit dais that the player can spin with the mouse.
+   */
+  private showLobbyScene(): void {
+    if (!this.lobby) this.lobby = new LobbyScene(0, 'vk77');
+    this.lobby.applyQuality();
+    this.lobby.setOperator(0, this.lobbyWeaponId());
+    this.engine.setRenderOverride({ scene: this.lobby.scene, camera: this.lobby.camera });
+    this.lobbyVisible = true;
+  }
+
+  /** Weapon the operator shows off in the lobby (first slot of the BR loadout). */
+  private lobbyWeaponId(): string {
+    const primary = save.data.profile.loadouts?.BR?.[0];
+    return typeof primary === 'string' && primary ? primary : 'vk77';
+  }
+
+  private hideLobbyScene(): void {
+    if (!this.lobbyVisible) return;
+    this.lobbyVisible = false;
+    this.engine.setRenderOverride(null);
+  }
+
+  /** True while a menu owns the canvas. */
+  private get lobbyActive(): boolean {
+    const s = this.ui.screen;
+    return s === 'menu' || s === 'lobby' || s === 'loading' || s === 'settings' ||
+      s === 'armory' || s === 'progression' || s === 'help' || s === 'results' || s === 'setup';
+  }
+
+  /** Mouse drag over the canvas spins the lobby operator; wheel dollies. */
+  private bindLobbyInput(): void {
+    const el = this.engine.renderer?.domElement as HTMLElement | undefined;
+    if (!el) return;
+    let dragging = false;
+    let lastX = 0;
+    el.addEventListener('pointerdown', (e) => {
+      if (!this.lobbyActive) return;
+      dragging = true;
+      lastX = e.clientX;
+      this.lobby?.pointerDown();
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!dragging || !this.lobbyActive) return;
+      this.lobby?.pointerMove(e.clientX - lastX);
+      lastX = e.clientX;
+    });
+    const stop = (): void => {
+      dragging = false;
+      this.lobby?.pointerUp();
+    };
+    el.addEventListener('pointerup', stop);
+    el.addEventListener('pointerleave', stop);
+    el.addEventListener('wheel', (e) => {
+      if (!this.lobbyActive) return;
+      this.lobby?.wheel(e.deltaY);
+    }, { passive: true });
   }
 
   private showMainMenu(): void {
     gameState.force('MAIN_MENU');
+    this.showLobbyScene();
     this.teardownMatch();
     this.ui.hideAllOverlays();
     this.ui.showScreen('menu');
@@ -311,6 +376,7 @@ export class Game implements UiHost {
   /** Builds renderers, controller, HUD and starts the actual fight. */
   private enterWorld(): void {
     if (!this.world || !this.terrain || !this.layout) return;
+    this.hideLobbyScene();
     this.disposeView();
     this.ui.clearMatchUi();
     this.ui.closeScreens();
@@ -410,6 +476,7 @@ export class Game implements UiHost {
 
   onSettingsChanged(): void {
     this.engine.applyQuality();
+    this.lobby?.applyQuality();
     this.audio.applyVolumes();
     if (this.world) this.world.autoPickupEnabledFlag(settings.data.autoPickup);
   }
@@ -734,6 +801,7 @@ export class Game implements UiHost {
     this.hud = null;
     this.input.exitPointerLock();
     this.audio.startMusic();
+    this.showLobbyScene();
     this.ui.showResults({
       victory: result.victory,
       placement: result.placement,

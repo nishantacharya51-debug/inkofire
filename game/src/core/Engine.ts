@@ -33,6 +33,7 @@ export class Engine {
   private updates: UpdateFn[] = [];
   private frameCallbacks: UpdateFn[] = [];
   private rafId = 0;
+  private override: { scene: THREE.Scene; camera: THREE.Camera } | null = null;
   private running = false;
   private accumulator = 0;
   private readonly fixedStep = 1 / 60;
@@ -130,6 +131,14 @@ export class Engine {
     return this.height;
   }
 
+  /**
+   * Renders a different scene/camera instead of the world. Menus use this to
+   * show the lobby hangar while a match is not running.
+   */
+  setRenderOverride(view: { scene: THREE.Scene; camera: THREE.Camera } | null): void {
+    this.override = view;
+  }
+
   /** Fixed-step simulation callback (60 Hz). */
   onFixedUpdate(fn: UpdateFn): () => void {
     this.updates.push(fn);
@@ -183,7 +192,7 @@ export class Engine {
 
     if (this.renderer) {
       try {
-        this.renderer.render(this.scene, this.camera);
+        this.renderer.render(this.override?.scene ?? this.scene, this.override?.camera ?? this.camera);
       } catch (err) {
         console.error('[Engine] render error', err);
         this.stop();
@@ -291,7 +300,7 @@ export class Engine {
   }
 
   renderOnce(): void {
-    if (this.renderer) this.renderer.render(this.scene, this.camera);
+    if (this.renderer) this.renderer.render(this.override?.scene ?? this.scene, this.override?.camera ?? this.camera);
   }
 
   /** Approximate GPU/JS timing snapshot for the debug overlay. */
